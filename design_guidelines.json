@@ -1,0 +1,133 @@
+{
+  "project_domain": "Developer Tools / Analytics Dashboard",
+  "theme": "Toggleable (Light & Dark Mode)",
+  "archetype": "Archetype 4 (Swiss & High-Contrast) mixed with Retro-Futurism for developers",
+  "visual_mood": "Command-center, analytical, objective, data-dense, technical",
+  "typography": {
+    "anti_default_rule": true,
+    "heading_font": "Outfit",
+    "body_font": "IBM Plex Sans",
+    "mono_font": "JetBrains Mono",
+    "font_imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@500;600;700;800&display=swap');"
+    ],
+    "scale": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tight font-heading font-bold",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-heading font-semibold",
+      "h3": "text-xl sm:text-2xl tracking-tight font-heading font-semibold",
+      "h4": "text-lg sm:text-xl font-heading font-medium",
+      "body": "text-base font-body leading-relaxed",
+      "mono_stats": "text-3xl sm:text-5xl font-mono tracking-tighter font-bold",
+      "labels": "text-xs font-mono tracking-[0.2em] uppercase"
+    }
+  },
+  "colors": {
+    "dark_mode": {
+      "background": "#09090B",
+      "surface": "#09090B",
+      "surface_hover": "#18181B",
+      "border": "#27272A",
+      "text_primary": "#FAFAFA",
+      "text_secondary": "#A1A1AA",
+      "primary_brand": "#3B82F6",
+      "accent_success": "#10B981",
+      "accent_warning": "#F59E0B",
+      "accent_dsa": "#8B5CF6",
+      "accent_projects": "#EC4899"
+    },
+    "light_mode": {
+      "background": "#FAFAFA",
+      "surface": "#FFFFFF",
+      "surface_hover": "#F4F4F5",
+      "border": "#E4E4E7",
+      "text_primary": "#09090B",
+      "text_secondary": "#52525B",
+      "primary_brand": "#2563EB",
+      "accent_success": "#059669",
+      "accent_warning": "#D97706",
+      "accent_dsa": "#7C3AED",
+      "accent_projects": "#DB2777"
+    },
+    "rules": [
+      "Never use pure black or gray; zinc/slate tinted scales are required.",
+      "Primary brand color (Blue) should only be used for active states and primary CTAs.",
+      "Ensure text over accents maintains a minimum 4.5:1 contrast ratio."
+    ]
+  },
+  "spacing_and_layout": {
+    "system": "Generous Spacing Philosophy combined with Control Room density.",
+    "dashboard_grid": {
+      "name": "MODE B: THE CONTROL ROOM GRID",
+      "base_classes": "grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4 md:gap-6",
+      "span_logic": {
+        "summary_widget": "col-span-1",
+        "primary_chart": "col-span-1 md:col-span-2 xl:col-span-3 row-span-2",
+        "feed_list": "col-span-1 row-span-2"
+      },
+      "rules": [
+        "Every pixel must be utilized. No jagged bottoms.",
+        "Add 'h-full' to card wrappers to ensure they stretch to match their neighbors.",
+        "Use 'align-items: start' on grid wrapper if overriding default stretch, but 'align-self: stretch' on specific items."
+      ]
+    }
+  },
+  "surfaces_and_micro_themes": {
+    "dashboard_cards": {
+      "style": "GRID BORDERS (The 'Technical' Look) + Flat Solid",
+      "dark_classes": "bg-[#09090B] border border-zinc-800 rounded-lg shadow-none",
+      "light_classes": "bg-white border border-zinc-200 rounded-lg shadow-sm",
+      "hover_classes": "transition-all duration-200 hover:-translate-y-1 hover:shadow-md hover:border-zinc-300 dark:hover:border-zinc-700"
+    },
+    "nav_header": {
+      "style": "Glassmorphism (Optical Clarity)",
+      "dark_classes": "bg-zinc-950/60 backdrop-blur-xl border-b border-white/10",
+      "light_classes": "bg-white/70 backdrop-blur-xl border-b border-zinc-200",
+      "rules": [
+        "Must be sticky at the top.",
+        "z-index: 50."
+      ]
+    }
+  },
+  "components_strategy": {
+    "general": "Always use pure HTML + Tailwind for structural bento layouts. Use heavily customized Shadcn UI for interactive elements.",
+    "buttons": "Flat design, crisp edges (rounded-md). Explicit hover states (e.g., hover:bg-blue-600 hover:text-white).",
+    "charts": "Shadcn charts (Recharts) for Readiness Score (Donut/Radial) and Weekly Graph (Area/Bar). Remove grid lines to maintain clean technical look.",
+    "icons": "react-icons (specifically react-icons/si for SiGithub, SiLeetcode, SiCodeforces) and lucide-react for general UI.",
+    "forms": "Never use native <input>. Use Shadcn Input, Form, Checkbox with explicit focus states (focus:ring-2 focus:ring-blue-500)."
+  },
+  "motion_and_interactions": {
+    "general": "Micro-interactions only. No large distracting animations.",
+    "hover_states": "All interactive elements must shift visually on hover.",
+    "focus_states": "High contrast ring for accessibility.",
+    "transitions": "transition-all duration-200 ease-out"
+  },
+  "media_urls": {
+    "auth_background_dark": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/aebb7a6d-cec7-42be-8543-483f84a54cd7/images/30999452ba81483cb88f4fc95ba9a318515382c0c211f501c3b5da77556d97f5.png",
+      "description": "Abstract technical geometric data background for Dark Mode auth page",
+      "usage": "Background image for the split-screen auth layout (email/password & Google OAuth) in dark mode."
+    },
+    "auth_background_light": {
+      "url": "https://static.prod-images.emergentagent.com/jobs/aebb7a6d-cec7-42be-8543-483f84a54cd7/images/d8cd64160b90179d9664bbefb69d4e5ce9674004a6e73dee4efa4e5dab95dbbf.png",
+      "description": "Abstract technical geometric data background for Light Mode auth page",
+      "usage": "Background image for the split-screen auth layout (email/password & Google OAuth) in light mode."
+    },
+    "user_avatar": {
+      "url": "https://images.unsplash.com/photo-1752738372136-2602aaafdcb7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDN8MHwxfHNlYXJjaHwzfHxkZXZlbG9wZXIlMjBjb2RpbmclMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzYzMjM1NDN8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Developer portrait",
+      "usage": "Placeholder for user profile avatar in dashboard header."
+    }
+  },
+  "accessibility_and_testing": {
+    "testing_ids": "All interactive elements MUST include a data-testid attribute in kebab-case (e.g., data-testid='login-submit-button', data-testid='theme-toggle-button').",
+    "contrast": "Ensure text contrast meets APCA/WCAG standards. Use pure white text on deep blue buttons."
+  },
+  "instructions_to_main_agent": {
+    "1": "You MUST add 'next-themes' to implement the Dark/Light mode toggle properly. Make sure Shadcn theme setup uses next-themes.",
+    "2": "For fonts, import them in index.css. Setup Tailwind config extending font families: `heading: ['Outfit', 'sans-serif']`, `body: ['IBM Plex Sans', 'sans-serif']`, `mono: ['JetBrains Mono', 'monospace']`.",
+    "3": "Install 'react-icons' for platform logos: SiGithub, SiLeetcode, SiCodeforces.",
+    "4": "The Readiness Score must be a combination chart (like a Donut/Radial chart) showing the breakdown (DSA 45%, Projects 30%, Consistency 25%).",
+    "5": "Do NOT use rounded-full for cards; use rounded-lg (8px) for that sharp technical dashboard look.",
+    "6": "Create a split-screen layout for the Auth page. Left side: The provided auth background image (dynamically swap based on theme). Right side: The login/signup form."
+  }
+}
