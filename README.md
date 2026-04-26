@@ -156,6 +156,3 @@ REACT_APP_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 
 ---
 
-## 📄 License
-
-MIT License — feel free to use and build on this!
