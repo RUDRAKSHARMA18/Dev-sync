@@ -97,3 +97,4 @@ frontend/node_modules/.cache/default-development/6.pack
 .env
 backend/.env
 frontend/.env
+backend/memory/test_credentials.md
