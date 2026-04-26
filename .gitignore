@@ -98,3 +98,17 @@ frontend/node_modules/.cache/default-development/6.pack
 backend/.env
 frontend/.env
 backend/memory/test_credentials.md
+
+# Secrets - never commit these
+.env
+.env.*
+*.env
+backend/.env
+frontend/.env
+backend/memory/test_credentials.md
+memory/test_credentials.md
+*.key
+*.pem
+*.secret
+*credentials*
+*secret*
