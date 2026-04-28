@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
-import { Gauge, TrendingUp, Code2, GitBranch, Calendar } from "lucide-react";
+import { Gauge, TrendingUp, Code2, GitBranch, Calendar, CheckCircle2, AlertCircle, ArrowRight, Sparkles } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 const COLORS = {
@@ -236,6 +236,76 @@ export default function ReadinessPage() {
           </Accordion>
         </div>
       </div>
+      
+      {/* Comprehensive AI Report */}
+      {readiness?.ai_report && (
+        <Card className="border rounded-lg bg-gradient-to-br from-card to-card/50 shadow-sm overflow-hidden animate-fade-in stagger-5">
+          <div className="h-1 bg-gradient-to-r from-brand-primary via-brand-secondary to-brand-accent w-full" />
+          <CardHeader className="pb-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <div className="w-10 h-10 rounded-full bg-brand-primary/10 flex items-center justify-center">
+                  <Sparkles size={20} className="text-brand-primary" />
+                </div>
+                <div>
+                  <CardTitle className="text-xl font-heading font-bold">AI Readiness Report</CardTitle>
+                  <p className="text-sm text-muted-foreground">Comprehensive analysis of your developer profile</p>
+                </div>
+              </div>
+              <div className="px-4 py-1.5 rounded-full bg-secondary/50 border shadow-sm">
+                <span className="text-sm font-semibold tracking-tight">Level: <span className="text-brand-primary">{readiness.ai_report.level}</span></span>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="p-4 rounded-md bg-muted/50 border border-border/50 text-sm leading-relaxed">
+              {readiness.ai_report.summary}
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-3">
+                <h4 className="flex items-center gap-2 text-sm font-semibold">
+                  <CheckCircle2 size={16} className="text-brand-success" /> Key Strengths
+                </h4>
+                <ul className="space-y-2">
+                  {readiness.ai_report.strengths?.map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <span className="text-brand-success mt-0.5">•</span> {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              
+              <div className="space-y-3">
+                <h4 className="flex items-center gap-2 text-sm font-semibold">
+                  <AlertCircle size={16} className="text-brand-warning" /> Areas to Improve
+                </h4>
+                <ul className="space-y-2">
+                  {readiness.ai_report.weaknesses?.map((item, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                      <span className="text-brand-warning mt-0.5">•</span> {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            
+            <div className="pt-4 border-t border-border/50">
+              <h4 className="flex items-center gap-2 text-sm font-semibold mb-3">
+                <TrendingUp size={16} className="text-primary" /> Recommended Action Plan
+              </h4>
+              <div className="space-y-2">
+                {readiness.ai_report.action_plan?.map((item, i) => (
+                  <div key={i} className="flex items-center gap-3 p-3 rounded-md bg-background border hover:border-primary/30 transition-colors">
+                    <ArrowRight size={16} className="text-muted-foreground shrink-0" />
+                    <span className="text-sm">{item}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

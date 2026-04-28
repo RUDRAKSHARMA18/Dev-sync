@@ -1313,30 +1313,50 @@ async def get_readiness(request: Request):
     # Weighted total
     total_score = round(dsa_score * 0.45 + project_score * 0.30 + consistency_score * 0.25, 1)
 
-    # Generate AI recommendations for each score component
+    # Generate AI recommendations for each score component and comprehensive report
+    prompt = f"""You are an expert technical interviewer and career coach.
+Analyze the following developer profile and provide a comprehensive interview readiness report.
+
+Scores:
+- Overall Readiness: {total_score}/100
+- DSA score: {round(dsa_score, 1)}/100 ({dsa_problems} problems solved)
+- Projects score: {round(project_score, 1)}/100 (Based on GitHub repos, commits, and stars)
+- Consistency score: {round(consistency_score, 1)}/100 (streak: {streak} days)
+
+Return ONLY a valid JSON object with the following exact keys:
+{{
+  "dsa_rec": "1 short sentence advice for DSA",
+  "projects_rec": "1 short sentence advice for Projects",
+  "consistency_rec": "1 short sentence advice for Consistency",
+  "ai_report": {{
+    "level": "Short title describing their estimated level (e.g., 'Junior Developer Ready', 'Needs DSA Focus', 'Entry Level')",
+    "summary": "2-3 sentences summarizing their overall profile and readiness.",
+    "strengths": ["1st specific strength", "2nd specific strength"],
+    "weaknesses": ["1st specific weakness/blind spot", "2nd specific weakness/blind spot"],
+    "action_plan": ["1st highly actionable step to improve", "2nd highly actionable step to improve", "3rd highly actionable step to improve"]
+  }}
+}}
+
+No markdown formatting, no explanation, ONLY the JSON object."""
+    
+    response_text = await call_gemini(prompt, expect_json=True)
+    
+    # Defaults in case of failure
     dsa_rec = f"You've solved {dsa_problems} DSA problems. Keep pushing to reach 300 for a perfect score!"
     projects_rec = "Build more projects and push commits regularly to boost your project score."
     consistency_rec = f"Your current streak is {streak} days. Aim for a 30-day streak to maximize consistency!"
+    ai_report = None
 
-    prompt = f"""You are DevSync AI. Give a short 1-2 sentence personalized recommendation for each of these readiness score components. Return ONLY valid JSON with keys: dsa, projects, consistency.
-
-Scores:
-- DSA score: {round(dsa_score, 1)}/100 ({dsa_problems} problems solved)
-- Projects score: {round(project_score, 1)}/100
-- Consistency score: {round(consistency_score, 1)}/100 (streak: {streak} days)
-
-Return ONLY the JSON object."""
-    
-    response_text = await call_gemini(prompt, expect_json=True)
     if response_text:
         try:
             json_start = response_text.find("{")
             json_end = response_text.rfind("}") + 1
             if json_start >= 0 and json_end > json_start:
                 recs = json.loads(response_text[json_start:json_end])
-                dsa_rec = recs.get("dsa", dsa_rec)
-                projects_rec = recs.get("projects", projects_rec)
-                consistency_rec = recs.get("consistency", consistency_rec)
+                dsa_rec = recs.get("dsa_rec", dsa_rec)
+                projects_rec = recs.get("projects_rec", projects_rec)
+                consistency_rec = recs.get("consistency_rec", consistency_rec)
+                ai_report = recs.get("ai_report", None)
         except Exception as e:
             logger.error(f"Readiness AI parse error: {e}")
 
@@ -1344,7 +1364,8 @@ Return ONLY the JSON object."""
         "total_score": total_score,
         "dsa": {"score": round(dsa_score, 1), "weight": 45, "problems_solved": dsa_problems, "ai_recommendation": dsa_rec},
         "projects": {"score": round(project_score, 1), "weight": 30, "ai_recommendation": projects_rec},
-        "consistency": {"score": round(consistency_score, 1), "weight": 25, "streak": streak, "ai_recommendation": consistency_rec}
+        "consistency": {"score": round(consistency_score, 1), "weight": 25, "streak": streak, "ai_recommendation": consistency_rec},
+        "ai_report": ai_report
     }
 
 # ======================== AI INSIGHTS ========================
