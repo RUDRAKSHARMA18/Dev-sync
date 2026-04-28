@@ -2029,10 +2029,16 @@ async def shutdown_db_client():
 app.include_router(api_router)
 
 # CORS
+cors_origins_str = os.environ.get("CORS_ORIGINS", "")
+origins = [o.strip() for o in cors_origins_str.split(",") if o.strip()]
+if not origins:
+    origins = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_origins=os.environ.get("CORS_ORIGINS", "*").split(","),
     allow_methods=["*"],
     allow_headers=["*"],
 )
