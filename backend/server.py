@@ -1549,7 +1549,7 @@ async def generate_new_goals_for_user(user_id: str) -> dict:
         {"title": "Solve First Medium Problem", "category": "dsa", "target_value": 1, "description": "Level up beyond easy problems"},
         {"title": "Create Your First Repository", "category": "projects", "target_value": 1, "description": "Start building your portfolio"},
         {"title": "Register on Codeforces", "category": "dsa", "target_value": 1, "description": "Join competitive programming"},
-        {"title": "Solve 10 Array Problems", "category": "dsa", "target_value": 10, "description": "Master the most common interview topic"},
+        {"title": "Solve 100 Total Problems", "category": "dsa", "target_value": 100, "description": "Hit the century mark for total solved"},
         {"title": "30-Day Coding Streak", "category": "consistency", "target_value": 30, "description": "Build an unstoppable habit"}
     ]
 
@@ -1560,36 +1560,33 @@ async def generate_new_goals_for_user(user_id: str) -> dict:
         {"title": "Solve 20 Hard Problems", "category": "dsa", "target_value": 20, "description": "Push your limits with hard problems"},
         {"title": "100 GitHub Commits This Month", "category": "projects", "target_value": 100, "description": "Show consistent coding activity"},
         {"title": "Participate in 5 CF Contests", "category": "dsa", "target_value": 5, "description": "Compete and improve under pressure"},
-        {"title": "Master Dynamic Programming", "category": "dsa", "target_value": 15, "description": "Solve 15 DP problems"},
+        {"title": "Solve 250 Total Problems", "category": "dsa", "target_value": 250, "description": "Solidify your algorithms knowledge"},
         {"title": "60-Day Coding Streak", "category": "consistency", "target_value": 60, "description": "Two months of daily coding"}
     ]
 
     advanced_goals = [
         {"title": "Reach Codeforces Expert (1600+)", "category": "dsa", "target_value": 1600, "description": "Hit Expert rank on Codeforces"},
         {"title": "Solve 50 Hard LeetCode Problems", "category": "dsa", "target_value": 50, "description": "Master the hardest interview questions"},
-        {"title": "Open Source Contribution", "category": "projects", "target_value": 5, "description": "Contribute to 5 open source projects"},
-        {"title": "LeetCode Contest Rating 1800+", "category": "dsa", "target_value": 1800, "description": "Compete at a high level on LeetCode"},
+        {"title": "5 Open Source Contributions", "category": "projects", "target_value": 5, "description": "Contribute to 5 open source projects"},
+        {"title": "Solve 200 Medium Problems", "category": "dsa", "target_value": 200, "description": "Master intermediate algorithms"},
         {"title": "Build a Full-Stack Project", "category": "projects", "target_value": 1, "description": "Ship a complete product"},
         {"title": "Solve 500 Total Problems", "category": "dsa", "target_value": 500, "description": "Reach 500 total problems solved"},
         {"title": "100-Day Coding Streak", "category": "consistency", "target_value": 100, "description": "Elite-level consistency"},
-        {"title": "Mentor a Junior Developer", "category": "projects", "target_value": 1, "description": "Give back to the community"}
+        {"title": "Participate in 20 CF Contests", "category": "dsa", "target_value": 20, "description": "Extensive contest experience"}
     ]
 
-    presets = beginner_goals
-    if level == "Intermediate":
-        presets = intermediate_goals
-    elif level == "Advanced":
-        presets = advanced_goals
+    # Combine all goals in order of difficulty
+    all_presets = beginner_goals + intermediate_goals + advanced_goals
 
     existing_goals = await db.goals.find({"user_id": user_id}).to_list(100)
     existing_titles = [g["title"] for g in existing_goals]
 
     new_goals = []
-    for p in presets:
+    for p in all_presets:
         if p["title"] not in existing_titles:
             goal_id = f"goal_{uuid.uuid4().hex[:12]}"
             
-            # Request Ollama for personalized description
+            # Request AI for personalized description
             prompt = f"User has solved {easy} easy, {medium} medium, {hard} hard LeetCode problems. CF rating: {cf_rating}.\nThey have a new goal: \"{p['title']}\". Write ONE motivational sentence (max 15 words) for why this goal matters for them specifically.\nReturn only the sentence."
             ai_desc = await call_gemini(prompt, expect_json=False)
             desc = ai_desc.strip() if ai_desc else p["description"]
@@ -1606,6 +1603,10 @@ async def generate_new_goals_for_user(user_id: str) -> dict:
                 "created_at": datetime.now(timezone.utc).isoformat()
             }
             new_goals.append(goal_doc)
+            
+            # Only add 3 new goals at a time so it doesn't overwhelm the user
+            if len(new_goals) >= 3:
+                break
 
     for g in new_goals:
         await db.goals.update_one(
