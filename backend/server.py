@@ -1863,14 +1863,14 @@ async def get_problem_recommendations(request: Request):
     prompt = f"""A developer has solved {easy} easy, {medium} medium, {hard} hard LeetCode problems.
 Codeforces rating: {cf_rating}. Their level is: {level}.
 
-Recommend exactly 10 LeetCode problems appropriate for their level.
+Recommend exactly 15 LeetCode problems (5 Easy, 5 Medium, and 5 Hard) to give them a mix of comfortable and challenging problems.
 Vary the topics: include Arrays, Strings, Trees, Graphs, DP, Binary Search, Stack/Queue, Greedy, Backtracking, Math.
 
-Return ONLY a JSON array of exactly 10 objects. Each object must have:
+Return ONLY a JSON array of exactly 15 objects. Each object must have:
 - "title": exact LeetCode problem title
 - "difficulty": "Easy", "Medium", or "Hard"  
 - "topic": main topic category
-- "reason": one specific sentence (max 12 words) why this fits their level
+- "reason": one specific sentence (max 12 words) why this is a good problem
 - "slug": the leetcode URL slug (e.g. "two-sum", "longest-substring-without-repeating-characters")
 
 No markdown. No explanation. Only the JSON array."""
@@ -1889,45 +1889,23 @@ No markdown. No explanation. Only the JSON array."""
 
     if not recs or len(recs) == 0:
         # Static fallback
-        if level in ("Beginner", "Easy-Intermediate"):
-            recs = [
-                {"title": "Two Sum", "difficulty": "Easy", "topic": "Arrays", "slug": "two-sum", "reason": "Fundamental hash map pattern."},
-                {"title": "Valid Anagram", "difficulty": "Easy", "topic": "Strings", "slug": "valid-anagram", "reason": "Great for learning character counting."},
-                {"title": "Binary Search", "difficulty": "Easy", "topic": "Binary Search", "slug": "binary-search", "reason": "Core algorithm every developer needs."},
-                {"title": "Reverse Linked List", "difficulty": "Easy", "topic": "Linked List", "slug": "reverse-linked-list", "reason": "Essential pointer manipulation practice."},
-                {"title": "Best Time to Buy and Sell Stock", "difficulty": "Easy", "topic": "Arrays", "slug": "best-time-to-buy-and-sell-stock", "reason": "Introduction to sliding window approach."},
-                {"title": "Merge Two Sorted Lists", "difficulty": "Easy", "topic": "Linked List", "slug": "merge-two-sorted-lists", "reason": "Good practice for list merging."},
-                {"title": "Valid Parentheses", "difficulty": "Easy", "topic": "Stack", "slug": "valid-parentheses", "reason": "Classic stack problem."},
-                {"title": "Climbing Stairs", "difficulty": "Easy", "topic": "Dynamic Programming", "slug": "climbing-stairs", "reason": "Learn basic DP transitions."},
-                {"title": "Maximum Subarray", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "maximum-subarray", "reason": "Kadane's algorithm is a must-know."},
-                {"title": "Contains Duplicate", "difficulty": "Easy", "topic": "Arrays", "slug": "contains-duplicate", "reason": "Learn to use hash sets."}
-            ]
-        elif level in ("Intermediate", "Hard-Intermediate"):
-            recs = [
-                {"title": "Number of Islands", "difficulty": "Medium", "topic": "Graphs", "slug": "number-of-islands", "reason": "Classic BFS/DFS traversal problem."},
-                {"title": "Coin Change", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "coin-change", "reason": "Introduction to 1D DP."},
-                {"title": "Trie (Prefix Tree)", "difficulty": "Medium", "topic": "Trie", "slug": "implement-trie-prefix-tree", "reason": "Important data structure for string search."},
-                {"title": "Course Schedule", "difficulty": "Medium", "topic": "Graphs", "slug": "course-schedule", "reason": "Learn topological sort."},
-                {"title": "Longest Substring Without Repeating Characters", "difficulty": "Medium", "topic": "Strings", "slug": "longest-substring-without-repeating-characters", "reason": "Essential sliding window problem."},
-                {"title": "3Sum", "difficulty": "Medium", "topic": "Arrays", "slug": "3sum", "reason": "Two pointers approach on sorted arrays."},
-                {"title": "Binary Tree Level Order Traversal", "difficulty": "Medium", "topic": "Trees", "slug": "binary-tree-level-order-traversal", "reason": "Learn BFS on trees."},
-                {"title": "Word Break", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "word-break", "reason": "Classic DP on strings."},
-                {"title": "Pacific Atlantic Water Flow", "difficulty": "Medium", "topic": "Graphs", "slug": "pacific-atlantic-water-flow", "reason": "Multi-source BFS practice."},
-                {"title": "Merge Intervals", "difficulty": "Medium", "topic": "Arrays", "slug": "merge-intervals", "reason": "Sorting and interval merging."}
-            ]
-        else:
-            recs = [
-                {"title": "Alien Dictionary", "difficulty": "Hard", "topic": "Graphs", "slug": "alien-dictionary", "reason": "Complex topological sort application."},
-                {"title": "Edit Distance", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "edit-distance", "reason": "Classic 2D DP problem."},
-                {"title": "Merge K Sorted Lists", "difficulty": "Hard", "topic": "Heaps", "slug": "merge-k-sorted-lists", "reason": "Great priority queue problem."},
-                {"title": "Word Search II", "difficulty": "Hard", "topic": "Trie", "slug": "word-search-ii", "reason": "Combines backtracking with tries."},
-                {"title": "Trapping Rain Water", "difficulty": "Hard", "topic": "Arrays", "slug": "trapping-rain-water", "reason": "Two pointers on arrays."},
-                {"title": "Serialize and Deserialize Binary Tree", "difficulty": "Hard", "topic": "Trees", "slug": "serialize-and-deserialize-binary-tree", "reason": "Tree traversal and string parsing."},
-                {"title": "Longest Increasing Path in a Matrix", "difficulty": "Hard", "topic": "Graphs", "slug": "longest-increasing-path-in-a-matrix", "reason": "DFS with memoization."},
-                {"title": "Burst Balloons", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "burst-balloons", "reason": "Complex divide and conquer DP."},
-                {"title": "Find Median from Data Stream", "difficulty": "Hard", "topic": "Heaps", "slug": "find-median-from-data-stream", "reason": "Two heaps pattern."},
-                {"title": "Regular Expression Matching", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "regular-expression-matching", "reason": "Advanced 2D DP problem."}
-            ]
+        recs = [
+            {"title": "Two Sum", "difficulty": "Easy", "topic": "Arrays", "slug": "two-sum", "reason": "Fundamental hash map pattern."},
+            {"title": "Valid Anagram", "difficulty": "Easy", "topic": "Strings", "slug": "valid-anagram", "reason": "Great for learning character counting."},
+            {"title": "Binary Search", "difficulty": "Easy", "topic": "Binary Search", "slug": "binary-search", "reason": "Core algorithm every developer needs."},
+            {"title": "Reverse Linked List", "difficulty": "Easy", "topic": "Linked List", "slug": "reverse-linked-list", "reason": "Essential pointer manipulation practice."},
+            {"title": "Climbing Stairs", "difficulty": "Easy", "topic": "Dynamic Programming", "slug": "climbing-stairs", "reason": "Learn basic DP transitions."},
+            {"title": "Number of Islands", "difficulty": "Medium", "topic": "Graphs", "slug": "number-of-islands", "reason": "Classic BFS/DFS traversal problem."},
+            {"title": "Coin Change", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "coin-change", "reason": "Introduction to 1D DP."},
+            {"title": "Course Schedule", "difficulty": "Medium", "topic": "Graphs", "slug": "course-schedule", "reason": "Learn topological sort."},
+            {"title": "3Sum", "difficulty": "Medium", "topic": "Arrays", "slug": "3sum", "reason": "Two pointers approach on sorted arrays."},
+            {"title": "Word Break", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "word-break", "reason": "Classic DP on strings."},
+            {"title": "Alien Dictionary", "difficulty": "Hard", "topic": "Graphs", "slug": "alien-dictionary", "reason": "Complex topological sort application."},
+            {"title": "Edit Distance", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "edit-distance", "reason": "Classic 2D DP problem."},
+            {"title": "Merge K Sorted Lists", "difficulty": "Hard", "topic": "Heaps", "slug": "merge-k-sorted-lists", "reason": "Great priority queue problem."},
+            {"title": "Trapping Rain Water", "difficulty": "Hard", "topic": "Arrays", "slug": "trapping-rain-water", "reason": "Two pointers on arrays."},
+            {"title": "Serialize and Deserialize Binary Tree", "difficulty": "Hard", "topic": "Trees", "slug": "serialize-and-deserialize-binary-tree", "reason": "Tree traversal and string parsing."}
+        ]
 
     # Ensure Leetcode URLs
     for r in recs:
@@ -1949,15 +1927,15 @@ No markdown. No explanation. Only the JSON array."""
 async def mark_problem_solved(slug: str, request: Request):
     user = await get_current_user(request)
     
-    # Add to solved_problems
+    # Update solved status
     await db.solved_problems.update_one(
         {"user_id": user["user_id"], "slug": slug},
         {"$set": {"solved_at": datetime.now(timezone.utc).isoformat()}},
         upsert=True
     )
     
-    # Delete recommendations cache to force refresh with new problem
-    await db.problem_recommendations.delete_many({"user_id": user["user_id"]})
+    # We do NOT delete the recommendations cache here anymore.
+    # This keeps the solved problem visible on the screen so the user can see it in their 'Solved' tab.
     
     # We could theoretically generate 1 new problem with Ollama here, but 
     # to be simple and robust we just delete the cache so the next GET refreshes it.
