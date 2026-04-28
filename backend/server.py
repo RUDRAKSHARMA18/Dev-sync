@@ -71,9 +71,7 @@ def get_jwt_secret():
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
-@app.get("/")
-def home():
-    return {"status": "DevSync Backend Running"}
+
 
 
 
