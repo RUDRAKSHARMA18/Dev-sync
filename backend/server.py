@@ -17,7 +17,7 @@ import aiohttp
 import asyncio
 import json
 import bcrypt
-import jwt
+from jose import jwt, JWTError, ExpiredSignatureError
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -406,9 +406,9 @@ async def refresh_token(request: Request, response: Response):
         access_token = create_access_token(user["user_id"], user["email"])
         response.set_cookie(key="access_token", value=access_token, httponly=True, secure=False, samesite="lax", max_age=3600, path="/")
         return {"message": "Token refreshed"}
-    except jwt.ExpiredSignatureError:
+    except ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Refresh token expired")
-    except jwt.InvalidTokenError:
+    except JWTError:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
 # ======================== PASSWORD RESET ========================
