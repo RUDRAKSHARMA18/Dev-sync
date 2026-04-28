@@ -799,6 +799,26 @@ async def sync_platform_data(user_id: str, platform: str, username: str, pat_tok
     try:
         if platform == "leetcode":
             data = await fetch_leetcode_data(username)
+            if "error" in data:
+                raise HTTPException(status_code=400, detail=data["error"])
+                
+            # Auto-sync recent AC submissions to solved_problems
+            recent_ac = data.pop("recent_ac", [])
+            for sub in recent_ac:
+                if sub and "titleSlug" in sub:
+                    try:
+                        timestamp_val = int(sub.get("timestamp", 0))
+                        dt_str = datetime.fromtimestamp(timestamp_val, tz=timezone.utc).isoformat() if timestamp_val else datetime.now(timezone.utc).isoformat()
+                        await db.solved_problems.update_one(
+                            {"user_id": user_id, "slug": sub["titleSlug"]},
+                            {"$set": {
+                                "solved_at": dt_str,
+                                "title": sub.get("title", sub["titleSlug"])
+                            }},
+                            upsert=True
+                        )
+                    except Exception as e:
+                        logger.error(f"Error saving recent AC submission: {e}")
         elif platform == "github":
             data = await fetch_github_data(username, pat_token)
         elif platform == "codeforces":
@@ -849,6 +869,11 @@ async def fetch_leetcode_data(username: str) -> dict:
             rating
             globalRanking
         }
+        recentAcSubmissionList(username: $username, limit: 30) {
+            title
+            titleSlug
+            timestamp
+        }
     }
     """
     async with httpx.AsyncClient(timeout=15.0) as http_client:
@@ -882,6 +907,7 @@ async def fetch_leetcode_data(username: str) -> dict:
 
         contest = result.get("data", {}).get("userContestRanking") or {}
         profile = user_data.get("profile", {})
+        recent_ac = result.get("data", {}).get("recentAcSubmissionList", [])
 
         # Parse submission calendar for streak
         calendar_str = user_data.get("submissionCalendar", "{}")
@@ -1928,11 +1954,27 @@ No markdown. No explanation. Only the JSON array."""
             {"title": "Regular Expression Matching", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "regular-expression-matching", "reason": "Advanced 2D DP problem."}
         ]
 
-    # Ensure Leetcode URLs
+    # Ensure Leetcode URLs and Solved flags
+    rec_slugs = set()
     for r in recs:
-        if "slug" in r and "leetcode_url" not in r:
-            r["leetcode_url"] = f"https://leetcode.com/problems/{r['slug']}/"
-        r["solved"] = r.get("slug") in solved_slugs
+        if "slug" in r:
+            if "leetcode_url" not in r:
+                r["leetcode_url"] = f"https://leetcode.com/problems/{r['slug']}/"
+            r["solved"] = r.get("slug") in solved_slugs
+            rec_slugs.add(r["slug"])
+            
+    # Append any solved problems from LeetCode auto-sync that are not in the AI recommendations
+    for doc in solved_docs:
+        if doc.get("slug") not in rec_slugs and doc.get("title"):
+            recs.append({
+                "title": doc["title"],
+                "difficulty": "Unknown",
+                "topic": "LeetCode Sync",
+                "slug": doc["slug"],
+                "reason": "Auto-synced from your LeetCode profile.",
+                "solved": True,
+                "leetcode_url": f"https://leetcode.com/problems/{doc['slug']}/"
+            })
 
     await db.problem_recommendations.delete_many({"user_id": user["user_id"]})
     await db.problem_recommendations.insert_one({
