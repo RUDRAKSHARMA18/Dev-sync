@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Lightbulb, AlertTriangle, Sparkles, RefreshCw, Brain } from "lucide-react";
+import { Lightbulb, AlertTriangle, Sparkles, RefreshCw, Brain, Trophy, Target, Activity } from "lucide-react";
 
 export default function InsightsPage() {
   const [insights, setInsights] = useState(null);
@@ -168,7 +168,61 @@ export default function InsightsPage() {
     <div className="space-y-6" data-testid="insights-page">
       <HeaderBanner />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* AI Coach Banner */}
+      {insights?.coach_message && (
+        <div className="bg-gradient-to-br from-primary/10 to-transparent border border-primary/20 rounded-2xl p-6 flex flex-col sm:flex-row items-center sm:items-start gap-4 animate-fade-in stagger-1">
+          <div className="w-12 h-12 rounded-full bg-primary/20 flex items-center justify-center shrink-0">
+            <Brain size={24} className="text-primary" />
+          </div>
+          <div className="text-center sm:text-left space-y-1">
+            <p className="font-heading font-bold text-lg text-foreground tracking-tight">Your AI Coach Says:</p>
+            <p className="text-muted-foreground leading-relaxed">{insights.coach_message}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Pro Stats Grid */}
+      {insights?.pro_stats && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 animate-fade-in stagger-2">
+          <Card className="bg-card/50 border shadow-sm">
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-yellow-500/10 flex items-center justify-center shrink-0">
+                <Trophy size={20} className="text-yellow-500" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Est. Percentile</p>
+                <p className="text-xl font-bold font-mono tracking-tighter">{insights.pro_stats.estimated_percentile}</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="bg-card/50 border shadow-sm">
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center shrink-0">
+                <Target size={20} className="text-blue-500" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Strongest Domain</p>
+                <p className="text-xl font-bold font-heading truncate max-w-[150px] sm:max-w-xs">{insights.pro_stats.strongest_domain}</p>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="bg-card/50 border shadow-sm">
+            <CardContent className="p-4 flex items-center gap-4">
+              <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center shrink-0">
+                <Activity size={20} className="text-green-500" />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Consistency</p>
+                <p className="text-xl font-bold font-mono tracking-tighter">{insights.pro_stats.consistency_rating}</p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-2">
         {/* Strengths */}
         <Card className="border-brand-success/20 rounded-2xl overflow-hidden relative group animate-fade-in stagger-1 hover:shadow-lg transition-shadow duration-500" data-testid="insights-card">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-brand-success to-emerald-400 opacity-70" />

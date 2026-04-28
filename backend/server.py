@@ -1416,13 +1416,18 @@ async def get_insights(request: Request):
     
     logger.info(f"Generating insights for user {user_id} with {len(platform_data_list)} platforms")
 
-    # LOCAL AI — powered by Ollama (https://ollama.com)
-    prompt = f"""You are DevSync AI, a developer growth analyst. Analyze this developer's data.
+    # LOCAL AI — powered by Ollama/Gemini
+    prompt = f"""You are DevSync AI, a high-energy developer growth coach. Analyze this developer's data.
 
 Developer Stats:
 {context}
 
-Return ONLY a valid JSON object with exactly these three keys:
+Return ONLY a valid JSON object with exactly these keys:
+- "coach_message": A hype-man style 1-2 sentence coaching intro based on their recent activity.
+- "pro_stats": An object with 3 vanity metrics:
+    - "estimated_percentile": A string like "Top 15%" or "Top 50%" based on their stats
+    - "strongest_domain": A string identifying their best area (e.g., "Data Structures", "Frontend Frameworks")
+    - "consistency_rating": A string grade (e.g., "S-Tier", "A-", "B+", "Needs Work")
 - "insights": array of exactly 3 strings — specific strengths based on their actual numbers
 - "weaknesses": array of exactly 2 strings — specific areas needing improvement  
 - "suggestions": array of exactly 3 strings — concrete actionable steps for this week (mention specific numbers)
@@ -1430,7 +1435,7 @@ Return ONLY a valid JSON object with exactly these three keys:
 Rules:
 - Reference actual numbers from their stats (e.g. "You've solved 45 medium problems")
 - Suggestions must be specific (e.g. "Solve 3 medium graph problems" not "practice graphs")
-- Be encouraging but honest
+- Be highly encouraging but honest
 - Return ONLY the JSON object. No markdown. No explanation. No code fences."""
 
     response_text = await call_gemini(prompt, expect_json=True)
@@ -1448,6 +1453,12 @@ Rules:
     if not insights_data or not insights_data.get("insights"):
         # Static fallback — always works
         insights_data = {
+            "coach_message": "You're building a solid foundation. Let's keep pushing the boundaries!",
+            "pro_stats": {
+                "estimated_percentile": "Top 40%",
+                "strongest_domain": "General Algorithms",
+                "consistency_rating": "B+"
+            },
             "insights": [
                 "You've been consistently active across your connected platforms.",
                 "Your problem-solving history shows steady growth.",
@@ -1466,6 +1477,12 @@ Rules:
 
     result = {
         "user_id": user_id,
+        "coach_message": insights_data.get("coach_message", "Keep grinding, developer!"),
+        "pro_stats": insights_data.get("pro_stats", {
+            "estimated_percentile": "Unranked",
+            "strongest_domain": "Unknown",
+            "consistency_rating": "N/A"
+        }),
         "insights": insights_data.get("insights", []),
         "weaknesses": insights_data.get("weaknesses", []),
         "suggestions": insights_data.get("suggestions", []),
