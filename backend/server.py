@@ -25,6 +25,7 @@ from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from bson import ObjectId
+import google.generativeai as genai
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -1218,33 +1219,36 @@ async def get_dashboard(request: Request):
         "platform_data": platform_data_list
     }
 
-# LOCAL AI — powered by Ollama (https://ollama.com)
+# CLOUD AI — powered by Google Gemini
 
-async def call_ollama(prompt: str, expect_json: bool = False) -> str:
-    """Call local Ollama LLM. Returns empty string if unavailable."""
-    try:
-        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
-        model = os.environ.get("OLLAMA_MODEL", "mistral")
-        async with httpx.AsyncClient(timeout=90.0) as http_client:
-            ollama_resp = await http_client.post(
-                f"{ollama_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False
-                }
-            )
-            if ollama_resp.status_code == 200:
-                result = ollama_resp.json().get("response", "").strip()
-                if expect_json:
-                    # Strip markdown code fences if present
-                    result = result.replace("```json", "").replace("```", "").strip()
-                return result
-    except httpx.ConnectError:
-        logger.warning("Ollama not running, using static fallback. Start with: ollama serve")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+async def call_gemini(prompt: str, expect_json: bool = False) -> str:
+    """Call Google Gemini LLM. Returns empty string if unavailable."""
+    if not GEMINI_API_KEY or GEMINI_API_KEY == "your_gemini_api_key_here":
+        logger.warning("GEMINI_API_KEY not configured, using static fallback.")
         return ""
+        
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        
+        # If we expect JSON, Gemini 1.5 supports JSON mode
+        generation_config = {"response_mime_type": "application/json"} if expect_json else None
+        
+        response = await model.generate_content_async(
+            prompt,
+            generation_config=generation_config
+        )
+        
+        result = response.text.strip()
+        if expect_json:
+            # Strip markdown code fences if present just in case
+            result = result.replace("```json", "").replace("```", "").strip()
+        return result
     except Exception as e:
-        logger.error(f"Ollama AI error: {e}")
+        logger.error(f"Gemini AI error: {e}")
     return ""
 
 # ======================== READINESS SCORE ========================
@@ -1299,7 +1303,7 @@ Scores:
 
 Return ONLY the JSON object."""
     
-    response_text = await call_ollama(prompt, expect_json=True)
+    response_text = await call_gemini(prompt, expect_json=True)
     if response_text:
         try:
             json_start = response_text.find("{")
@@ -1384,7 +1388,7 @@ Rules:
 - Be encouraging but honest
 - Return ONLY the JSON object. No markdown. No explanation. No code fences."""
 
-    response_text = await call_ollama(prompt, expect_json=True)
+    response_text = await call_gemini(prompt, expect_json=True)
     insights_data = None
     
     if response_text:
@@ -1585,7 +1589,7 @@ async def generate_new_goals_for_user(user_id: str) -> dict:
             
             # Request Ollama for personalized description
             prompt = f"User has solved {easy} easy, {medium} medium, {hard} hard LeetCode problems. CF rating: {cf_rating}.\nThey have a new goal: \"{p['title']}\". Write ONE motivational sentence (max 15 words) for why this goal matters for them specifically.\nReturn only the sentence."
-            ai_desc = await call_ollama(prompt, expect_json=False)
+            ai_desc = await call_gemini(prompt, expect_json=False)
             desc = ai_desc.strip() if ai_desc else p["description"]
             
             goal_doc = {
@@ -1754,7 +1758,7 @@ Goals:
 
 Return ONLY the JSON object, no markdown."""
 
-    response_text = await call_ollama(prompt, expect_json=True)
+    response_text = await call_gemini(prompt, expect_json=True)
     tips = {}
     if response_text:
         try:
@@ -1868,7 +1872,7 @@ Return ONLY a JSON array of exactly 10 objects. Each object must have:
 
 No markdown. No explanation. Only the JSON array."""
 
-    response_text = await call_ollama(prompt, expect_json=True)
+    response_text = await call_gemini(prompt, expect_json=True)
     recs = []
     
     if response_text:
