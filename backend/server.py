@@ -1810,17 +1810,20 @@ async def auto_sync_all_platforms():
 # ======================== PROBLEMS ========================
 
 @api_router.get("/problems/recommendations")
-async def get_problem_recommendations(request: Request):
+async def get_problem_recommendations(request: Request, refresh: bool = False):
     user = await get_current_user(request)
     platform_data_list = await db.platform_data.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(10)
     
     solved_docs = await db.solved_problems.find({"user_id": user["user_id"]}).to_list(1000)
     solved_slugs = {doc["slug"] for doc in solved_docs}
 
-    # Check cached problems (valid for 24 hours)
-    cached = await db.problem_recommendations.find_one({"user_id": user["user_id"]}, {"_id": 0})
-    if cached:
-        generated_at = cached.get("generated_at", "")
+    if refresh:
+        await db.problem_recommendations.delete_many({"user_id": user["user_id"]})
+    else:
+        # Check cached problems (valid for 24 hours)
+        cached = await db.problem_recommendations.find_one({"user_id": user["user_id"]}, {"_id": 0})
+        if cached:
+            generated_at = cached.get("generated_at", "")
         if generated_at:
             try:
                 gen_time = datetime.fromisoformat(generated_at)
@@ -1863,15 +1866,15 @@ async def get_problem_recommendations(request: Request):
     prompt = f"""A developer has solved {easy} easy, {medium} medium, {hard} hard LeetCode problems.
 Codeforces rating: {cf_rating}. Their level is: {level}.
 
-Recommend exactly 15 LeetCode problems (5 Easy, 5 Medium, and 5 Hard) to give them a mix of comfortable and challenging problems.
-Vary the topics: include Arrays, Strings, Trees, Graphs, DP, Binary Search, Stack/Queue, Greedy, Backtracking, Math.
+Recommend exactly 30 LeetCode problems (10 Easy, 10 Medium, and 10 Hard) to give them a massive mix of comfortable and challenging problems.
+Vary the topics widely: Arrays, Strings, Trees, Graphs, DP, Binary Search, Stack, Math, Pointers.
 
-Return ONLY a JSON array of exactly 15 objects. Each object must have:
+Return ONLY a JSON array of exactly 30 objects. Each object must have:
 - "title": exact LeetCode problem title
 - "difficulty": "Easy", "Medium", or "Hard"  
 - "topic": main topic category
-- "reason": one specific sentence (max 12 words) why this is a good problem
-- "slug": the leetcode URL slug (e.g. "two-sum", "longest-substring-without-repeating-characters")
+- "reason": one specific sentence (max 10 words) why this is good
+- "slug": the leetcode URL slug (e.g. "two-sum")
 
 No markdown. No explanation. Only the JSON array."""
 
@@ -1890,21 +1893,39 @@ No markdown. No explanation. Only the JSON array."""
     if not recs or len(recs) == 0:
         # Static fallback
         recs = [
+            # Easy
             {"title": "Two Sum", "difficulty": "Easy", "topic": "Arrays", "slug": "two-sum", "reason": "Fundamental hash map pattern."},
             {"title": "Valid Anagram", "difficulty": "Easy", "topic": "Strings", "slug": "valid-anagram", "reason": "Great for learning character counting."},
             {"title": "Binary Search", "difficulty": "Easy", "topic": "Binary Search", "slug": "binary-search", "reason": "Core algorithm every developer needs."},
             {"title": "Reverse Linked List", "difficulty": "Easy", "topic": "Linked List", "slug": "reverse-linked-list", "reason": "Essential pointer manipulation practice."},
             {"title": "Climbing Stairs", "difficulty": "Easy", "topic": "Dynamic Programming", "slug": "climbing-stairs", "reason": "Learn basic DP transitions."},
+            {"title": "Best Time to Buy and Sell Stock", "difficulty": "Easy", "topic": "Arrays", "slug": "best-time-to-buy-and-sell-stock", "reason": "Intro to sliding window approach."},
+            {"title": "Merge Two Sorted Lists", "difficulty": "Easy", "topic": "Linked List", "slug": "merge-two-sorted-lists", "reason": "Good practice for list merging."},
+            {"title": "Valid Parentheses", "difficulty": "Easy", "topic": "Stack", "slug": "valid-parentheses", "reason": "Classic stack problem."},
+            {"title": "Contains Duplicate", "difficulty": "Easy", "topic": "Arrays", "slug": "contains-duplicate", "reason": "Learn to use hash sets."},
+            {"title": "Maximum Depth of Binary Tree", "difficulty": "Easy", "topic": "Trees", "slug": "maximum-depth-of-binary-tree", "reason": "Basic tree traversal DFS."},
+            # Medium
             {"title": "Number of Islands", "difficulty": "Medium", "topic": "Graphs", "slug": "number-of-islands", "reason": "Classic BFS/DFS traversal problem."},
             {"title": "Coin Change", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "coin-change", "reason": "Introduction to 1D DP."},
             {"title": "Course Schedule", "difficulty": "Medium", "topic": "Graphs", "slug": "course-schedule", "reason": "Learn topological sort."},
             {"title": "3Sum", "difficulty": "Medium", "topic": "Arrays", "slug": "3sum", "reason": "Two pointers approach on sorted arrays."},
             {"title": "Word Break", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "word-break", "reason": "Classic DP on strings."},
+            {"title": "Longest Substring Without Repeating Characters", "difficulty": "Medium", "topic": "Strings", "slug": "longest-substring-without-repeating-characters", "reason": "Essential sliding window."},
+            {"title": "Binary Tree Level Order Traversal", "difficulty": "Medium", "topic": "Trees", "slug": "binary-tree-level-order-traversal", "reason": "Learn BFS on trees."},
+            {"title": "Pacific Atlantic Water Flow", "difficulty": "Medium", "topic": "Graphs", "slug": "pacific-atlantic-water-flow", "reason": "Multi-source BFS practice."},
+            {"title": "Merge Intervals", "difficulty": "Medium", "topic": "Arrays", "slug": "merge-intervals", "reason": "Sorting and interval merging."},
+            {"title": "Implement Trie", "difficulty": "Medium", "topic": "Trie", "slug": "implement-trie-prefix-tree", "reason": "Important data structure for strings."},
+            # Hard
             {"title": "Alien Dictionary", "difficulty": "Hard", "topic": "Graphs", "slug": "alien-dictionary", "reason": "Complex topological sort application."},
             {"title": "Edit Distance", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "edit-distance", "reason": "Classic 2D DP problem."},
             {"title": "Merge K Sorted Lists", "difficulty": "Hard", "topic": "Heaps", "slug": "merge-k-sorted-lists", "reason": "Great priority queue problem."},
             {"title": "Trapping Rain Water", "difficulty": "Hard", "topic": "Arrays", "slug": "trapping-rain-water", "reason": "Two pointers on arrays."},
-            {"title": "Serialize and Deserialize Binary Tree", "difficulty": "Hard", "topic": "Trees", "slug": "serialize-and-deserialize-binary-tree", "reason": "Tree traversal and string parsing."}
+            {"title": "Serialize and Deserialize Binary Tree", "difficulty": "Hard", "topic": "Trees", "slug": "serialize-and-deserialize-binary-tree", "reason": "Tree traversal and parsing."},
+            {"title": "Word Search II", "difficulty": "Hard", "topic": "Trie", "slug": "word-search-ii", "reason": "Combines backtracking with tries."},
+            {"title": "Longest Increasing Path in a Matrix", "difficulty": "Hard", "topic": "Graphs", "slug": "longest-increasing-path-in-a-matrix", "reason": "DFS with memoization."},
+            {"title": "Burst Balloons", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "burst-balloons", "reason": "Complex divide and conquer DP."},
+            {"title": "Find Median from Data Stream", "difficulty": "Hard", "topic": "Heaps", "slug": "find-median-from-data-stream", "reason": "Two heaps pattern."},
+            {"title": "Regular Expression Matching", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "regular-expression-matching", "reason": "Advanced 2D DP problem."}
         ]
 
     # Ensure Leetcode URLs

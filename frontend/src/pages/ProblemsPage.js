@@ -15,12 +15,8 @@ export default function ProblemsPage() {
   const fetchRecommendations = async (forceRefresh = false) => {
     if (forceRefresh) setRefreshing(true);
     try {
-      if (forceRefresh) {
-         // Optionally you could add an endpoint to clear cache, but standard fetch just gets it.
-         // Let's assume a query param ?refresh=true would bypass cache if we implemented it, 
-         // but for now we just call it.
-      }
-      const { data } = await api.get("/problems/recommendations");
+      const endpoint = forceRefresh ? "/problems/recommendations?refresh=true" : "/problems/recommendations";
+      const { data } = await api.get(endpoint);
       setRecommendations(data.recommendations || []);
       setLevel(data.level || "");
     } catch (err) {
