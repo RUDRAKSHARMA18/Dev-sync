@@ -2042,3 +2042,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve React Frontend (Single Server Mode)
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+frontend_build_dir = os.path.join(ROOT_DIR.parent, "frontend", "build")
+
+# Only mount if the build directory exists
+if os.path.exists(frontend_build_dir):
+    # Serve static assets (/static/js, /static/css, etc)
+    static_dir = os.path.join(frontend_build_dir, "static")
+    if os.path.exists(static_dir):
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+    # Fallback route for SPA (React Router)
+    @app.get("/{full_path:path}")
+    async def serve_react_app(full_path: str):
+        # If the user is trying to hit an API endpoint that doesn't exist, return 404 JSON instead of HTML
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+            
+        requested_file = os.path.join(frontend_build_dir, full_path)
+        # Serve exact file if it exists (e.g., manifest.json, favicon.ico)
+        if os.path.isfile(requested_file):
+            return FileResponse(requested_file)
+        
+        # Otherwise serve index.html for client-side routing
+        return FileResponse(os.path.join(frontend_build_dir, "index.html"))
+else:
+    logger.warning(f"Frontend build directory not found at {frontend_build_dir}. Ensure you run 'npm run build' in the frontend directory.")
