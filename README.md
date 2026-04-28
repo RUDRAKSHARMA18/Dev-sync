@@ -1,18 +1,18 @@
 # DevSync 🚀
-> AI-powered developer activity tracker — Built for **AI Made Hackathon 2026**
+> AI-powered developer activity tracker — 100% local, zero paid API keys required
 
-DevSync connects your LeetCode, GitHub, Codeforces and CodeChef accounts in one place, tracks your coding activity, and uses **GPT-4o AI** to generate personalized insights and calculate your **Interview Readiness Score**.
+DevSync connects your LeetCode, GitHub, Codeforces and CodeChef accounts in one place, tracks your coding activity, and uses **local AI via Ollama** to generate personalized insights and calculate your **Interview Readiness Score**.
 
 ---
 
 ## ✨ Features
 
 - 📊 **Unified Dashboard** — All your coding stats in one place
-- 🤖 **AI Insights** — GPT-4o analyzes your activity and gives personalized feedback
-- 🎯 **Readiness Score** — Interview readiness out of 100 (DSA 45% + Projects 30% + Consistency 25%)
+- 🤖 **AI Insights** — Local Ollama AI analyzes your activity and gives personalized feedback
+- 🎯 **Readiness Score** — Interview readiness out of 100 (DSA 45% + Projects 30% + Consistency 25%) with AI recommendations per component
 - 🔥 **Contribution Heatmap** — 365-day activity heatmap like GitHub
-- 🎪 **Goal Tracking** — Set and track coding goals with AI-generated suggestions
-- 🔐 **Secure Auth** — JWT + Google OAuth, bcrypt passwords, httpOnly cookies
+- 🎪 **Goal Tracking** — Auto-generate goals with AI-written motivational descriptions
+- 🔐 **Secure Auth** — JWT + native Google OAuth, bcrypt passwords, httpOnly cookies
 - 🌙 **Dark / Light Mode**
 - ⚡ **Auto Sync** — Platforms auto-refresh every 6 hours
 
@@ -25,18 +25,9 @@ DevSync connects your LeetCode, GitHub, Codeforces and CodeChef accounts in one 
 | Frontend | React 19 + Tailwind CSS + shadcn/ui + Recharts |
 | Backend | FastAPI (Python) + async Motor |
 | Database | MongoDB |
-| Auth | JWT + Google OAuth |
-| AI | OpenAI GPT-4o |
-| Email | Resend API |
-
----
-
-## 📸 Screenshots
-
-> Dashboard — Unified stats, heatmap, weekly chart
-> Readiness Score — Interview readiness breakdown
-> AI Insights — GPT-4o personalized feedback
-> Goals — Track and auto-generate coding goals
+| Auth | JWT + Google OAuth (`@react-oauth/google`) |
+| AI | Ollama (local) — default model: `mistral` |
+| Email | Resend API (optional, for password reset) |
 
 ---
 
@@ -46,8 +37,8 @@ DevSync connects your LeetCode, GitHub, Codeforces and CodeChef accounts in one 
 - Python 3.9+
 - Node.js 16+
 - MongoDB (local or Atlas)
-- OpenAI API Key — [platform.openai.com](https://platform.openai.com/api-keys)
 - Google OAuth Client ID — [console.cloud.google.com](https://console.cloud.google.com)
+- Ollama (optional, for AI features) — [ollama.com](https://ollama.com)
 
 ---
 
@@ -99,7 +90,7 @@ Open a new terminal tab:
 ```bash
 cd frontend
 npm install
-cp .env.example .env            # Fill in your keys
+cp .env.example .env            # Fill in your Google Client ID
 npm start
 ```
 
@@ -110,27 +101,54 @@ npm start
 ### 5. Environment Variables
 
 **backend/.env**
+```
 MONGO_URL=mongodb://localhost:27017
 DB_NAME=devsync
 JWT_SECRET=generate-with-openssl-rand-hex-32
 RESEND_API_KEY=optional_for_email
 GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your_google_client_secret
-OPENAI_API_KEY=sk-your_openai_key
+OLLAMA_MODEL=mistral
+```
 
 **frontend/.env**
+```
 REACT_APP_BACKEND_URL=http://localhost:8001
 REACT_APP_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+```
 
 ---
 
-### 6. Google OAuth Setup (for Google login)
+### 6. Google OAuth Setup
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create project → APIs & Services → Credentials → OAuth 2.0 Client
-3. Add Authorized JavaScript Origins: `http://localhost:3000`
-4. Add Authorized Redirect URIs: `http://localhost:3000`
-5. Copy Client ID and Secret to your `.env` files
+2. Create project → APIs & Services → Credentials → OAuth 2.0 Client ID
+3. Application type: **Web application**
+4. Add **Authorized JavaScript Origins**: `http://localhost:3000`
+5. Add **Authorized Redirect URIs**: `http://localhost:3000`
+6. Copy Client ID to both `backend/.env` (`GOOGLE_CLIENT_ID`) and `frontend/.env` (`REACT_APP_GOOGLE_CLIENT_ID`)
+
+---
+
+### 7. Local AI Setup (Optional — Ollama)
+
+AI features (Insights, Readiness recommendations, Goal descriptions) use **Ollama** running locally. If Ollama is not running, the app falls back gracefully to static responses — everything else still works.
+
+```bash
+# Install Ollama from https://ollama.com (one-time)
+# Then pull a model:
+ollama pull mistral
+
+# Start the Ollama server:
+ollama serve
+```
+
+Ollama runs at `http://localhost:11434` by default. You can change the model in `backend/.env`:
+```
+OLLAMA_MODEL=mistral    # or llama3, phi3, gemma, etc.
+```
+
+> **No API key required.** All AI runs locally on your machine.
 
 ---
 
@@ -139,16 +157,30 @@ REACT_APP_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/auth/register` | Create account |
-| POST | `/api/auth/login` | Login |
+| POST | `/api/auth/login` | Login with email/password |
+| POST | `/api/auth/google/session` | Login with Google OAuth |
 | GET | `/api/auth/me` | Get current user |
-| POST | `/api/platforms/connect` | Connect LeetCode/GitHub/etc |
-| GET | `/api/dashboard` | Get all stats |
-| GET | `/api/readiness` | Get readiness score |
-| GET | `/api/insights` | Get AI insights |
-| GET | `/api/goals` | Get goals |
+| POST | `/api/auth/logout` | Logout |
+| POST | `/api/auth/forgot-password` | Request password reset |
+| POST | `/api/auth/reset-password` | Reset password with token |
+| POST | `/api/platforms/connect` | Connect LeetCode / GitHub / Codeforces / CodeChef |
+| GET | `/api/platforms` | List connected platforms |
+| POST | `/api/platforms/{platform}/sync` | Manual sync |
+| GET | `/api/dashboard` | Unified stats |
+| GET | `/api/heatmap` | 365-day contribution heatmap |
+| GET | `/api/readiness` | Readiness score + AI recommendations |
+| GET | `/api/insights` | AI-generated insights (Ollama) |
+| POST | `/api/insights/regenerate` | Force-refresh insights |
+| GET | `/api/goals` | List goals |
 | POST | `/api/goals` | Create goal |
+| PUT | `/api/goals/{goal_id}` | Update goal progress |
+| DELETE | `/api/goals/{goal_id}` | Delete goal |
+| POST | `/api/goals/auto-generate` | AI-generate goals from platform stats |
+| PUT | `/api/profile` | Update profile name |
 
 ---
 
 
+**Rudra Sharma** — [@RUDRAKSHARMA18](https://github.com/RUDRAKSHARMA18)
 
+---

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Code2, GitCommit, Flame, Activity, RefreshCw, ExternalLink } from "lucide-react";
 import { SiLeetcode, SiGithub, SiCodeforces, SiCodechef } from "react-icons/si";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import ContributionHeatmap from "@/components/ContributionHeatmap";
 
 const platformIcons = {
@@ -26,13 +28,31 @@ const platformColors = {
 export default function DashboardPage() {
   const { user } = useAuth();
   const [dashboard, setDashboard] = useState(null);
+  const [heatmapRaw, setHeatmapRaw] = useState([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(null);
+  const [period, setPeriod] = useState(() => localStorage.getItem("dashboard_period") || "365");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState(() => new Date().toISOString().split("T")[0]);
+
+  useEffect(() => {
+    localStorage.setItem("dashboard_period", period);
+  }, [period]);
 
   const fetchDashboard = async () => {
     try {
-      const { data } = await api.get("/dashboard");
-      setDashboard(data);
+      let url = `/dashboard?days=${period}`;
+      if (period === "custom") {
+        if (!customStart || !customEnd) return; // Wait until both are set
+        url = `/dashboard?from=${customStart}&to=${customEnd}`;
+      }
+      
+      const [dashRes, heatRes] = await Promise.all([
+        api.get(url),
+        api.get("/heatmap"),
+      ]);
+      setDashboard(dashRes.data);
+      setHeatmapRaw(heatRes.data.heatmap || []);
     } catch (err) {
       console.error("Dashboard fetch error:", err);
     } finally {
@@ -42,7 +62,8 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchDashboard();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, customStart, customEnd]);
 
   const handleSync = async (platform) => {
     setSyncing(platform);
@@ -56,6 +77,43 @@ export default function DashboardPage() {
     }
   };
 
+  // Compute period-filtered stats from heatmap data
+  const periodStats = useMemo(() => {
+    if (!heatmapRaw.length) return { contributions: 0, activeDays: 0 };
+    let filtered = heatmapRaw;
+    if (period === "custom" && customStart && customEnd) {
+      filtered = heatmapRaw.filter(d => d.date >= customStart && d.date <= customEnd);
+    } else if (period !== "custom") {
+      const days = parseInt(period, 10);
+      filtered = heatmapRaw.slice(-days);
+    } else {
+      filtered = [];
+    }
+    const contributions = filtered.reduce((sum, d) => sum + d.count, 0);
+    const activeDays = filtered.filter((d) => d.count > 0).length;
+    return { contributions, activeDays };
+  }, [heatmapRaw, period, customStart, customEnd]);
+
+  // Build period-filtered weekly graph
+  const periodWeeklyGraph = useMemo(() => {
+    if (!heatmapRaw.length) return dashboard?.weekly_graph || [];
+    let filtered = heatmapRaw;
+    if (period === "custom" && customStart && customEnd) {
+      filtered = heatmapRaw.filter(d => d.date >= customStart && d.date <= customEnd);
+    } else if (period !== "custom") {
+      const days = parseInt(period, 10);
+      filtered = heatmapRaw.slice(-days);
+    } else {
+      filtered = [];
+    }
+    const last7 = filtered.slice(-7);
+    return last7.map((d) => ({
+      date: d.date,
+      day: new Date(d.date + "T00:00:00Z").toLocaleDateString("en-US", { weekday: "short" }),
+      activity: d.count,
+    }));
+  }, [heatmapRaw, period, customStart, customEnd, dashboard]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -63,6 +121,8 @@ export default function DashboardPage() {
       </div>
     );
   }
+
+  const periodLabel = period === "7" ? "7 days" : period === "30" ? "30 days" : period === "90" ? "90 days" : period === "custom" ? "custom range" : "year";
 
   const stats = [
     {
@@ -73,8 +133,9 @@ export default function DashboardPage() {
       bgColor: "bg-brand-dsa/10",
     },
     {
-      label: "COMMITS",
-      value: dashboard?.total_commits || 0,
+      label: "CONTRIBUTIONS",
+      value: periodStats.contributions,
+      subLabel: `in ${periodLabel}`,
       icon: GitCommit,
       color: "text-brand-success",
       bgColor: "bg-brand-success/10",
@@ -98,11 +159,44 @@ export default function DashboardPage() {
   return (
     <div className="space-y-6" data-testid="dashboard-page">
       {/* Welcome */}
-      <div className="animate-fade-in">
-        <h1 className="font-heading font-bold text-2xl sm:text-3xl tracking-tight">
-          Welcome back, {user?.name?.split(" ")[0] || "Developer"}
-        </h1>
-        <p className="text-muted-foreground text-sm mt-1">Here's your coding activity overview</p>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 animate-fade-in">
+        <div>
+          <h1 className="font-heading font-bold text-2xl sm:text-3xl tracking-tight">
+            Welcome back, {user?.name?.split(" ")[0] || "Developer"}
+          </h1>
+          <p className="text-muted-foreground text-sm mt-1">Here's your coding activity overview</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {period === "custom" && (
+            <div className="flex items-center gap-2 animate-fade-in">
+              <Input
+                type="date"
+                className="h-9 w-[130px] text-xs"
+                value={customStart}
+                onChange={(e) => setCustomStart(e.target.value)}
+              />
+              <span className="text-muted-foreground text-xs">to</span>
+              <Input
+                type="date"
+                className="h-9 w-[130px] text-xs"
+                value={customEnd}
+                onChange={(e) => setCustomEnd(e.target.value)}
+              />
+            </div>
+          )}
+          <Select value={period} onValueChange={setPeriod}>
+            <SelectTrigger className="w-[140px] h-9 text-xs font-medium">
+              <SelectValue placeholder="Select Period" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="7">Last 7 Days</SelectItem>
+              <SelectItem value="30">Last 30 Days</SelectItem>
+              <SelectItem value="90">Last 90 Days</SelectItem>
+              <SelectItem value="365">Last 365 Days</SelectItem>
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Stats Grid */}
@@ -123,6 +217,9 @@ export default function DashboardPage() {
               <p className="text-3xl sm:text-4xl font-mono font-bold tracking-tighter" data-testid={`stat-value-${stat.label.toLowerCase().replace(/\s/g, "-")}`}>
                 {stat.value}
               </p>
+              {stat.subLabel && (
+                <p className="text-xs text-muted-foreground mt-1">{stat.subLabel}</p>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -132,12 +229,12 @@ export default function DashboardPage() {
         {/* Weekly Activity Chart */}
         <Card className="xl:col-span-2 border rounded-lg animate-fade-in" data-testid="weekly-chart-card">
           <CardHeader className="pb-2">
-            <CardTitle className="text-lg font-heading font-semibold">Weekly Activity</CardTitle>
+            <CardTitle className="text-lg font-heading font-semibold">Recent Activity</CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
             <div className="h-[240px] sm:h-[280px]">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={dashboard?.weekly_graph || []} barSize={32}>
+                <BarChart data={periodWeeklyGraph} barSize={32}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                   <XAxis
                     dataKey="day"
@@ -222,7 +319,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Contribution Heatmap */}
-      <ContributionHeatmap />
+      <ContributionHeatmap period={period} customStart={customStart} customEnd={customEnd} />
 
       {/* Platform Details */}
       {dashboard?.platform_data?.length > 0 && (

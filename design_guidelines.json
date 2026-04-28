@@ -103,13 +103,13 @@
   },
   "media_urls": {
     "auth_background_dark": {
-      "url": "https://static.prod-images.emergentagent.com/jobs/aebb7a6d-cec7-42be-8543-483f84a54cd7/images/30999452ba81483cb88f4fc95ba9a318515382c0c211f501c3b5da77556d97f5.png",
-      "description": "Abstract technical geometric data background for Dark Mode auth page",
+      "url": "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&q=80",
+      "description": "Code editor dark theme background for Dark Mode auth page",
       "usage": "Background image for the split-screen auth layout (email/password & Google OAuth) in dark mode."
     },
     "auth_background_light": {
-      "url": "https://static.prod-images.emergentagent.com/jobs/aebb7a6d-cec7-42be-8543-483f84a54cd7/images/d8cd64160b90179d9664bbefb69d4e5ce9674004a6e73dee4efa4e5dab95dbbf.png",
-      "description": "Abstract technical geometric data background for Light Mode auth page",
+      "url": "https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=800&q=80",
+      "description": "Coding workspace background for Light Mode auth page",
       "usage": "Background image for the split-screen auth layout (email/password & Google OAuth) in light mode."
     },
     "user_avatar": {

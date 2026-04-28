@@ -9,12 +9,13 @@ import { formatApiError } from "@/lib/api";
 import api from "@/lib/api";
 import { Mail, Lock, User, Eye, EyeOff, Sun, Moon } from "lucide-react";
 import { SiGoogle } from "react-icons/si";
+import { useGoogleLogin } from "@react-oauth/google";
 
-const AUTH_BG_DARK = "https://static.prod-images.emergentagent.com/jobs/aebb7a6d-cec7-42be-8543-483f84a54cd7/images/30999452ba81483cb88f4fc95ba9a318515382c0c211f501c3b5da77556d97f5.png";
-const AUTH_BG_LIGHT = "https://static.prod-images.emergentagent.com/jobs/aebb7a6d-cec7-42be-8543-483f84a54cd7/images/d8cd64160b90179d9664bbefb69d4e5ce9674004a6e73dee4efa4e5dab95dbbf.png";
+const AUTH_BG_DARK = "https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=800&q=80";
+const AUTH_BG_LIGHT = "https://images.unsplash.com/photo-1461749280684-dccba630e2f6?w=800&q=80";
 
 export default function AuthPage() {
-  const { user, login, register } = useAuth();
+  const { user, login, register, setAuthUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
@@ -29,6 +30,39 @@ export default function AuthPage() {
   const [forgotEmail, setForgotEmail] = useState("");
   const [forgotStep, setForgotStep] = useState(1); // 1 = email, 2 = token+password
   const [successMsg, setSuccessMsg] = useState("");
+
+  // Native Google OAuth login via @react-oauth/google
+  const googleLogin = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setLoading(true);
+      setError("");
+      try {
+        // Fetch user info from Google using the access token
+        const userInfoRes = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+          headers: { Authorization: `Bearer ${tokenResponse.access_token}` },
+        });
+        if (!userInfoRes.ok) throw new Error("Failed to fetch Google user info");
+        const userInfo = await userInfoRes.json();
+
+        // Send to our backend for session creation
+        const { data } = await api.post("/auth/google/session", {
+          email: userInfo.email,
+          name: userInfo.name,
+          picture: userInfo.picture,
+          access_token: tokenResponse.access_token,
+        });
+        setAuthUser(data);
+      } catch (err) {
+        setError(formatApiError(err.response?.data?.detail) || err.message || "Google login failed");
+      } finally {
+        setLoading(false);
+      }
+    },
+    onError: (errorResponse) => {
+      setError("Google login failed. Please try again.");
+      console.error("Google login error:", errorResponse);
+    },
+  });
 
   if (user) return <Navigate to="/dashboard" replace />;
 
@@ -45,7 +79,9 @@ export default function AuthPage() {
           setLoading(false);
           return;
         }
-        await register(email, password, name);
+        const data = await register(email, password, name);
+        // Redirect to verify-email with the email they just used
+        window.location.href = `/verify-email?email=${encodeURIComponent(email)}`;
       }
     } catch (err) {
       setError(formatApiError(err.response?.data?.detail) || err.message);
@@ -61,18 +97,13 @@ export default function AuthPage() {
     setLoading(true);
     try {
       const { data } = await api.post("/auth/forgot-password", { email: forgotEmail });
-      if (data.reset_token) {
-        // Fallback: token returned directly (email failed)
-        setResetToken(data.reset_token);
+      if (data.error) {
+        setError(data.error);
+        setLoading(false);
+        return;
       }
       setForgotStep(2);
-      if (data.email_sent) {
-        setSuccessMsg("A password reset email has been sent to your inbox. Check your email for the reset token.");
-      } else if (data.reset_token) {
-        setSuccessMsg("Email delivery failed. Your reset token has been pre-filled below.");
-      } else {
-        setSuccessMsg("If an account exists with that email, a reset token has been sent.");
-      }
+      setSuccessMsg(data.message || "If an account exists with that email, a reset token has been sent.");
     } catch (err) {
       setError(formatApiError(err.response?.data?.detail) || err.message);
     } finally {
@@ -98,12 +129,6 @@ export default function AuthPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleGoogleLogin = () => {
-    // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-    const redirectUrl = window.location.origin + "/dashboard";
-    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
   };
 
   return (
@@ -198,14 +223,16 @@ export default function AuthPage() {
                 ) : (
                   <form onSubmit={handleResetPassword} className="space-y-4">
                     <div className="space-y-2">
-                      <Label htmlFor="reset-token" className="text-sm font-medium">Reset Token</Label>
+                      <Label htmlFor="reset-token" className="text-sm font-medium">6-Digit Reset Code</Label>
                       <Input
                         id="reset-token"
                         type="text"
-                        placeholder="Paste your reset token"
+                        maxLength={6}
+                        placeholder="000000"
                         value={resetToken}
-                        onChange={(e) => setResetToken(e.target.value)}
+                        onChange={(e) => setResetToken(e.target.value.replace(/[^0-9]/g, ''))}
                         required
+                        className="text-center tracking-widest font-mono text-xl"
                         data-testid="reset-token-input"
                       />
                     </div>
@@ -341,7 +368,7 @@ export default function AuthPage() {
             <Button
               variant="outline"
               className="w-full h-11 gap-2 font-medium"
-              onClick={handleGoogleLogin}
+              onClick={() => googleLogin()}
               data-testid="google-login-button"
             >
               <SiGoogle size={16} />

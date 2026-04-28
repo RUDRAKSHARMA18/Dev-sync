@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Target, Plus, Trash2, Sparkles, CheckCircle2 } from "lucide-react";
 
 const categoryColors = {
@@ -22,7 +22,10 @@ export default function GoalsPage() {
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [tips, setTips] = useState({});
   const [newGoal, setNewGoal] = useState({ title: "", description: "", target_value: 1, category: "general" });
+  const [activeTab, setActiveTab] = useState("active");
 
   const fetchGoals = async () => {
     try {
@@ -63,6 +66,20 @@ export default function GoalsPage() {
     }
   };
 
+  const handleAnalyzeProgress = async () => {
+    setAnalyzing(true);
+    try {
+      const { data } = await api.get("/goals/progress-analysis");
+      if (data.tips) {
+        setTips(data.tips);
+      }
+    } catch (err) {
+      console.error("Analysis error:", err);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   const handleUpdateProgress = async (goalId, currentValue) => {
     try {
       await api.put(`/goals/${goalId}`, { current_value: currentValue });
@@ -90,6 +107,14 @@ export default function GoalsPage() {
     }
   };
 
+  const activeGoals = useMemo(() => goals.filter((g) => !g.completed), [goals]);
+  const completedGoals = useMemo(() => goals.filter((g) => g.completed), [goals]);
+
+  let displayGoals = [];
+  if (activeTab === "active") displayGoals = activeGoals;
+  else if (activeTab === "completed") displayGoals = completedGoals;
+  else displayGoals = [...activeGoals, ...completedGoals];
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -97,9 +122,6 @@ export default function GoalsPage() {
       </div>
     );
   }
-
-  const activeGoals = goals.filter((g) => !g.completed);
-  const completedGoals = goals.filter((g) => g.completed);
 
   return (
     <div className="space-y-6" data-testid="goals-page">
@@ -109,6 +131,16 @@ export default function GoalsPage() {
           <p className="text-muted-foreground text-sm mt-1">Track your progress and stay motivated</p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleAnalyzeProgress}
+            disabled={analyzing}
+            className="gap-2 text-brand-projects"
+          >
+            <Sparkles size={14} className={analyzing ? "animate-spin" : ""} />
+            Get AI Tips
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -185,65 +217,75 @@ export default function GoalsPage() {
         </div>
       </div>
 
-      {/* Active Goals */}
-      {activeGoals.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="font-heading font-semibold text-lg">Active ({activeGoals.length})</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {activeGoals.map((goal, i) => (
-              <GoalCard
-                key={goal.goal_id}
-                goal={goal}
-                index={i}
-                onUpdateProgress={handleUpdateProgress}
-                onToggleComplete={handleToggleComplete}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="active">Active ({activeGoals.length})</TabsTrigger>
+          <TabsTrigger value="completed">Completed ({completedGoals.length})</TabsTrigger>
+          <TabsTrigger value="all">All ({goals.length})</TabsTrigger>
+        </TabsList>
 
-      {/* Completed Goals */}
-      {completedGoals.length > 0 && (
-        <div className="space-y-3">
-          <h2 className="font-heading font-semibold text-lg text-muted-foreground">
-            Completed ({completedGoals.length})
-          </h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {completedGoals.map((goal, i) => (
-              <GoalCard
-                key={goal.goal_id}
-                goal={goal}
-                index={i}
-                onUpdateProgress={handleUpdateProgress}
-                onToggleComplete={handleToggleComplete}
-                onDelete={handleDelete}
-              />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {goals.length === 0 && (
-        <Card className="border rounded-lg" data-testid="no-goals-message">
-          <CardContent className="flex flex-col items-center justify-center py-16">
-            <Target size={48} className="text-muted-foreground/30 mb-4" />
-            <p className="text-muted-foreground mb-4">No goals yet. Create one or auto-generate based on your activity!</p>
-            <Button onClick={handleAutoGenerate} disabled={generating} data-testid="empty-auto-generate">
-              <Sparkles size={14} className="mr-2" />
-              Auto-Generate Goals
-            </Button>
-          </CardContent>
-        </Card>
-      )}
+        <TabsContent value={activeTab} className="space-y-4">
+          {goals.length === 0 ? (
+            <Card className="border rounded-lg" data-testid="no-goals-message">
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <Target size={48} className="text-muted-foreground/30 mb-4" />
+                <p className="text-muted-foreground mb-4">No goals yet. Generate some below!</p>
+                <Button onClick={handleAutoGenerate} disabled={generating} data-testid="empty-auto-generate">
+                  <Sparkles size={14} className="mr-2" />
+                  Auto-Generate Goals
+                </Button>
+              </CardContent>
+            </Card>
+          ) : displayGoals.length === 0 ? (
+            <Card className="border rounded-lg">
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <Target size={48} className="text-muted-foreground/30 mb-4" />
+                <p className="text-muted-foreground">No goals found in this tab.</p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {displayGoals.map((goal, i) => (
+                <GoalCard
+                  key={goal.goal_id}
+                  goal={goal}
+                  index={i}
+                  onUpdateProgress={handleUpdateProgress}
+                  onToggleComplete={handleToggleComplete}
+                  onDelete={handleDelete}
+                  tip={tips[goal.title]}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
-function GoalCard({ goal, index, onUpdateProgress, onToggleComplete, onDelete }) {
-  const progress = goal.target_value > 0 ? Math.min(100, (goal.current_value / goal.target_value) * 100) : 0;
-  const colorClass = categoryColors[goal.category] || categoryColors.general;
+function GoalCard({ goal, index, onUpdateProgress, onToggleComplete, onDelete, tip }) {
+  const rawProgress = goal.target_value > 0 ? (goal.current_value / goal.target_value) * 100 : 0;
+  const progress = Math.min(100, Math.max(0, rawProgress));
+  
+  const categoryColorClass = categoryColors[goal.category] || categoryColors.general;
+
+  // Color logic based on progress percentage
+  let progressColorClass = "bg-primary";
+  let progressColorHex = "hsl(var(--primary))";
+  if (goal.completed || progress === 100) {
+    progressColorClass = "bg-green-500";
+    progressColorHex = "#22c55e";
+  } else if (progress > 75) {
+    progressColorClass = "bg-green-400";
+    progressColorHex = "#4ade80";
+  } else if (progress >= 25 && progress <= 75) {
+    progressColorClass = "bg-yellow-400";
+    progressColorHex = "#facc15";
+  } else {
+    progressColorClass = "bg-red-400";
+    progressColorHex = "#f87171";
+  }
 
   return (
     <Card
@@ -255,12 +297,12 @@ function GoalCard({ goal, index, onUpdateProgress, onToggleComplete, onDelete })
         <div className="flex items-start justify-between mb-3">
           <div className="flex-1">
             <div className="flex items-center gap-2 mb-1">
-              <Badge variant="outline" className={`text-xs ${colorClass}`}>
+              <Badge variant="outline" className={`text-xs ${categoryColorClass}`}>
                 {goal.category}
               </Badge>
               {goal.completed && <CheckCircle2 size={16} className="text-brand-success" />}
             </div>
-            <h3 className="font-heading font-semibold text-sm">{goal.title}</h3>
+            <h3 className={`font-heading font-semibold text-sm ${goal.completed ? "line-through text-muted-foreground" : ""}`}>{goal.title}</h3>
             {goal.description && (
               <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{goal.description}</p>
             )}
@@ -290,9 +332,14 @@ function GoalCard({ goal, index, onUpdateProgress, onToggleComplete, onDelete })
         <div className="space-y-2">
           <div className="flex items-center justify-between text-xs">
             <span className="text-muted-foreground">Progress</span>
-            <span className="font-mono font-medium">{goal.current_value}/{goal.target_value}</span>
+            <span className="font-mono font-medium">{goal.current_value}/{goal.target_value} ({Math.round(progress)}%)</span>
           </div>
-          <Progress value={progress} className="h-2" />
+          <div className="w-full bg-muted rounded-full h-2">
+            <div
+              className="h-2 rounded-full transition-all duration-500"
+              style={{ width: `${progress}%`, backgroundColor: progressColorHex }}
+            />
+          </div>
         </div>
 
         {!goal.completed && (
@@ -312,6 +359,13 @@ function GoalCard({ goal, index, onUpdateProgress, onToggleComplete, onDelete })
               data-testid={`goal-progress-input-${goal.goal_id}`}
             />
             <span className="text-xs text-muted-foreground">/ {goal.target_value}</span>
+          </div>
+        )}
+
+        {tip && !goal.completed && (
+          <div className="mt-3 p-3 bg-brand-projects/10 rounded-md text-xs text-brand-projects flex items-start gap-2 animate-fade-in">
+            <Sparkles size={14} className="shrink-0 mt-0.5" />
+            <p>{tip}</p>
           </div>
         )}
       </CardContent>

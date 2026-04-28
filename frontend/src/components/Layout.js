@@ -2,13 +2,14 @@ import React, { useState } from "react";
 import { NavLink, useNavigate, Outlet } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
-import { LayoutDashboard, Lightbulb, Target, Gauge, Settings, LogOut, Menu, X, Sun, Moon } from "lucide-react";
+import { LayoutDashboard, Lightbulb, Target, Gauge, Settings, LogOut, Menu, X, Sun, Moon, Code2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const navItems = [
   { path: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/insights", label: "Insights", icon: Lightbulb },
   { path: "/goals", label: "Goals", icon: Target },
+  { path: "/problems", label: "Problems", icon: Code2 },
   { path: "/readiness", label: "Readiness", icon: Gauge },
   { path: "/settings", label: "Settings", icon: Settings },
 ];

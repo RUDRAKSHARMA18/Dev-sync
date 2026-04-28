@@ -7,8 +7,8 @@ DevSync is a full-stack SaaS platform connecting LeetCode, GitHub, Codeforces, C
 - **Frontend**: React 19 + Tailwind CSS + Shadcn UI + Recharts
 - **Backend**: FastAPI (Python) with async Motor for MongoDB
 - **Database**: MongoDB (via MONGO_URL env)
-- **Auth**: JWT (httpOnly cookies) + Google OAuth (Emergent Auth)
-- **AI**: OpenAI GPT-5.2 via Emergent LLM key
+- **Auth**: JWT (httpOnly cookies) + Google OAuth (native @react-oauth/google)
+- **AI**: Ollama local LLM (default: mistral) via direct API — no API key required
 - **Email**: Resend API for password reset emails
 
 ## What's Been Implemented

@@ -6,15 +6,15 @@ import { Calendar } from "lucide-react";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-function getColor(count, isDark) {
-  if (count === 0) return isDark ? "#18181B" : "#F4F4F5";
-  if (count <= 2) return isDark ? "#1E3A5F" : "#DBEAFE";
-  if (count <= 5) return isDark ? "#1D4ED8" : "#93C5FD";
-  if (count <= 10) return isDark ? "#2563EB" : "#60A5FA";
-  return isDark ? "#3B82F6" : "#3B82F6";
+function getIntensityClass(count) {
+  if (count === 0) return "bg-muted";
+  if (count <= 2) return "bg-emerald-200 dark:bg-emerald-900";
+  if (count <= 5) return "bg-emerald-400 dark:bg-emerald-700";
+  if (count <= 10) return "bg-emerald-500 dark:bg-emerald-500";
+  return "bg-emerald-600 dark:bg-emerald-400";
 }
 
-export default function ContributionHeatmap() {
+export default function ContributionHeatmap({ period = "365", customStart, customEnd }) {
   const [heatmapData, setHeatmapData] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,39 +32,51 @@ export default function ContributionHeatmap() {
     fetchHeatmap();
   }, []);
 
-  const isDark = document.documentElement.classList.contains("dark");
+  const filteredData = useMemo(() => {
+    if (!heatmapData.length) return [];
+    if (period === "custom" && customStart && customEnd) {
+      return heatmapData.filter(d => d.date >= customStart && d.date <= customEnd);
+    } else if (period !== "custom") {
+      const days = parseInt(period, 10);
+      return heatmapData.slice(-days);
+    }
+    return [];
+  }, [heatmapData, period, customStart, customEnd]);
 
-  // Group data by weeks (columns) with weekday as row
-  const { weeks, monthLabels, totalActivity, activeDays } = useMemo(() => {
-    if (!heatmapData.length) return { weeks: [], monthLabels: [], totalActivity: 0, activeDays: 0 };
+  const { totalActivity, activeDays, cells, monthLabels } = useMemo(() => {
+    if (!filteredData.length) return { totalActivity: 0, activeDays: 0, cells: [], monthLabels: [] };
 
-    const w = [];
-    let currentWeek = [];
     let total = 0;
     let active = 0;
     const mLabels = [];
     let lastMonth = -1;
+    let colIndex = 0;
 
-    heatmapData.forEach((day, i) => {
+    // Pad the start with empty cells if the first day isn't a Sunday
+    const startWeekday = filteredData[0].weekday;
+    const paddedCells = Array(startWeekday).fill(null);
+
+    const dataCells = filteredData.map((day) => {
       total += day.count;
       if (day.count > 0) active++;
 
-      if (day.weekday === 0 && currentWeek.length > 0) {
-        w.push(currentWeek);
-        currentWeek = [];
-      }
-      currentWeek.push(day);
-
-      // Track month labels
+      // Track month labels (simplified, places label at approx column index)
+      const currentWeek = Math.floor((paddedCells.length + filteredData.indexOf(day)) / 7);
       if (day.month !== lastMonth) {
-        mLabels.push({ month: MONTHS[day.month - 1], weekIndex: w.length });
+        mLabels.push({ month: MONTHS[day.month - 1], weekIndex: currentWeek });
         lastMonth = day.month;
       }
-    });
-    if (currentWeek.length > 0) w.push(currentWeek);
 
-    return { weeks: w, monthLabels: mLabels, totalActivity: total, activeDays: active };
-  }, [heatmapData]);
+      return day;
+    });
+
+    return { 
+      totalActivity: total, 
+      activeDays: active, 
+      cells: [...paddedCells, ...dataCells],
+      monthLabels: mLabels 
+    };
+  }, [filteredData]);
 
   if (loading) {
     return (
@@ -92,54 +104,52 @@ export default function ContributionHeatmap() {
       </CardHeader>
       <CardContent>
         {/* Month labels */}
-        <div className="flex mb-1 ml-8" data-testid="heatmap-month-labels">
+        <div className="flex mb-1 ml-8 relative h-4 overflow-hidden" data-testid="heatmap-month-labels">
           {monthLabels.map((ml, i) => (
             <div
               key={i}
-              className="text-[10px] text-muted-foreground font-mono"
-              style={{ position: "relative", left: `${ml.weekIndex * 14}px` }}
+              className="text-[10px] text-muted-foreground font-mono absolute"
+              style={{ left: `${ml.weekIndex * 14}px` }}
             >
               {ml.month}
             </div>
           ))}
         </div>
 
-        {/* Heatmap grid */}
-        <div className="flex gap-[2px] overflow-x-auto pb-2" data-testid="heatmap-grid">
+        <div className="flex gap-2 overflow-x-auto pb-2" data-testid="heatmap-grid">
           {/* Day labels */}
-          <div className="flex flex-col gap-[2px] mr-1 shrink-0">
+          <div className="grid grid-rows-7 gap-[2px] pr-1 shrink-0">
             {["", "Mon", "", "Wed", "", "Fri", ""].map((label, i) => (
-              <div key={i} className="h-[12px] text-[9px] text-muted-foreground font-mono flex items-center justify-end pr-1 w-6">
+              <div key={i} className="h-[12px] text-[9px] text-muted-foreground font-mono flex items-center justify-end w-6">
                 {label}
               </div>
             ))}
           </div>
 
+          {/* Heatmap true CSS grid */}
           <TooltipProvider delayDuration={100}>
-            {weeks.map((week, wi) => (
-              <div key={wi} className="flex flex-col gap-[2px]">
-                {Array.from({ length: 7 }, (_, dayIndex) => {
-                  const cell = week.find((d) => d.weekday === dayIndex);
-                  if (!cell) return <div key={dayIndex} className="w-[12px] h-[12px]" />;
+            <div className="grid grid-rows-7 grid-flow-col gap-[2px]">
+              {cells.map((cell, i) => {
+                if (!cell) {
+                  return <div key={`empty-${i}`} className="w-[12px] h-[12px]" />;
+                }
 
-                  return (
-                    <Tooltip key={dayIndex}>
-                      <TooltipTrigger asChild>
-                        <div
-                          className="w-[12px] h-[12px] rounded-[2px] transition-colors cursor-pointer hover:ring-1 hover:ring-foreground/30"
-                          style={{ backgroundColor: getColor(cell.count, isDark) }}
-                          data-testid={`heatmap-cell-${cell.date}`}
-                        />
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        <p className="font-mono font-semibold">{cell.count} contribution{cell.count !== 1 ? "s" : ""}</p>
-                        <p className="text-muted-foreground">{cell.date}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                })}
-              </div>
-            ))}
+                return (
+                  <Tooltip key={`day-${cell.date}`}>
+                    <TooltipTrigger asChild>
+                      <div
+                        className={`w-[12px] h-[12px] rounded-[2px] transition-colors cursor-pointer hover:ring-1 hover:ring-foreground/30 ${getIntensityClass(cell.count)}`}
+                        data-testid={`heatmap-cell-${cell.date}`}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      <p className="font-mono font-semibold">{cell.count} contribution{cell.count !== 1 ? "s" : ""}</p>
+                      <p className="text-muted-foreground">{cell.date}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                );
+              })}
+            </div>
           </TooltipProvider>
         </div>
 
@@ -149,8 +159,7 @@ export default function ContributionHeatmap() {
           {[0, 2, 5, 10, 15].map((level) => (
             <div
               key={level}
-              className="w-[12px] h-[12px] rounded-[2px]"
-              style={{ backgroundColor: getColor(level, isDark) }}
+              className={`w-[12px] h-[12px] rounded-[2px] ${getIntensityClass(level)}`}
             />
           ))}
           <span className="text-[10px] text-muted-foreground ml-1">More</span>

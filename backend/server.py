@@ -18,7 +18,9 @@ import asyncio
 import json
 import bcrypt
 import jwt
-import resend
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
@@ -28,8 +30,30 @@ from bson import ObjectId
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# Resend setup
-resend.api_key = os.environ.get("RESEND_API_KEY", "")
+# Gmail SMTP setup
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
+SMTP_APP_PASSWORD = os.environ.get("SMTP_APP_PASSWORD", "")
+
+def send_email_smtp(to_email: str, subject: str, html_content: str):
+    """Send an email via Gmail SMTP. Works with any recipient."""
+    if not SMTP_EMAIL or not SMTP_APP_PASSWORD:
+        logger.error("SMTP_EMAIL or SMTP_APP_PASSWORD not configured in .env")
+        return False
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["From"] = f"DevSync <{SMTP_EMAIL}>"
+        msg["To"] = to_email
+        msg["Subject"] = subject
+        msg.attach(MIMEText(html_content, "html"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(SMTP_EMAIL, SMTP_APP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+        logger.info(f"Email sent to {to_email}: {subject}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
 
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
@@ -45,11 +69,6 @@ def get_jwt_secret():
 # Create the main app
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
-
-
-from fastapi import FastAPI
-
-app = FastAPI()
 
 @app.get("/")
 def home():
@@ -72,6 +91,9 @@ class PlatformConnectRequest(BaseModel):
     platform: str
     username: str
     pat_token: Optional[str] = None
+
+class GitHubOAuthCallbackRequest(BaseModel):
+    code: str
 
 class GoalCreate(BaseModel):
     title: str
@@ -176,36 +198,126 @@ async def get_current_user(request: Request) -> dict:
 # ======================== AUTH ENDPOINTS ========================
 
 @api_router.post("/auth/register")
-async def register(req: RegisterRequest, response: Response):
+async def register(req: RegisterRequest):
     email = req.email.strip().lower()
     existing = await db.users.find_one({"email": email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    # Generate unique username
+    base_username = "".join(c for c in req.name.strip().lower() if c.isalnum())
+    if not base_username:
+        base_username = "user"
+    
+    import random
+    while True:
+        suffix = f"{random.randint(1000, 9999)}"
+        username = f"{base_username}{suffix}"
+        if not await db.users.find_one({"username": username}):
+            break
 
     user_id = f"user_{uuid.uuid4().hex[:12]}"
     password_hash = hash_password(req.password)
 
     user_doc = {
         "user_id": user_id,
+        "username": username,
         "email": email,
         "name": req.name.strip(),
         "password_hash": password_hash,
         "role": "user",
+        "email_verified": False,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "auth_provider": "email"
     }
     await db.users.insert_one(user_doc)
 
-    access_token = create_access_token(user_id, email)
-    refresh_token = create_refresh_token(user_id)
-    set_auth_cookies(response, access_token, refresh_token)
+    verify_token = f"{random.randint(100000, 999999)}"
+    await db.email_verifications.insert_one({
+        "user_id": user_id,
+        "token": verify_token,
+        "verified": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    html_content = f"""
+    <div style="font-family: sans-serif; padding: 20px;">
+        <h2>Verify your email</h2>
+        <p>Hi {req.name.strip()},</p>
+        <p>Your verification code is:</p>
+        <div style="font-size: 24px; font-weight: bold; background: #f3f4f6; padding: 10px; display: inline-block; letter-spacing: 2px;">{verify_token}</div>
+        <p>Please enter this code on the verification page to activate your account.</p>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(send_email_smtp, email, "DevSync - Verify your email", html_content)
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {email}: {e}")
 
     return {
-        "user_id": user_id,
-        "email": email,
-        "name": req.name.strip(),
-        "role": "user"
+        "message": "Account created. Please check your email to verify your account."
     }
+
+class VerifyEmailRequest(BaseModel):
+    email: str
+    code: str
+
+@api_router.post("/auth/verify-email")
+async def verify_email(req: VerifyEmailRequest):
+    email = req.email.strip().lower()
+    user = await db.users.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=400, detail="User not found")
+
+    verification = await db.email_verifications.find_one({
+        "user_id": user["user_id"], 
+        "token": req.code.strip(), 
+        "verified": False
+    })
+    
+    if not verification:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification code.")
+    
+    await db.email_verifications.update_one({"_id": verification["_id"]}, {"$set": {"verified": True}})
+    await db.users.update_one({"user_id": verification["user_id"]}, {"$set": {"email_verified": True}})
+    return {"message": "Email verified successfully."}
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+
+@api_router.post("/auth/resend-verification")
+async def resend_verification(req: ResendVerificationRequest):
+    email = req.email.strip().lower()
+    user = await db.users.find_one({"email": email, "auth_provider": "email"})
+    if not user:
+        return {"message": "If this email is registered, a verification link has been sent."}
+    
+    if user.get("email_verified"):
+        return {"message": "Email is already verified."}
+
+    import random
+    verify_token = f"{random.randint(100000, 999999)}"
+    await db.email_verifications.insert_one({
+        "user_id": user["user_id"],
+        "token": verify_token,
+        "verified": False,
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    html_content = f"""
+    <div style="font-family: sans-serif; padding: 20px;">
+        <h2>Verify your email</h2>
+        <p>Hi {user.get('name', 'Developer')},</p>
+        <p>Your new verification code is:</p>
+        <div style="font-size: 24px; font-weight: bold; background: #f3f4f6; padding: 10px; display: inline-block; letter-spacing: 2px;">{verify_token}</div>
+    </div>
+    """
+    try:
+        await asyncio.to_thread(send_email_smtp, email, "DevSync - Verify your email", html_content)
+    except Exception as e:
+        logger.error(f"Failed to send verification email to {email}: {e}")
+
+    return {"message": "If this email is registered, a verification link has been sent."}
 
 @api_router.post("/auth/login")
 async def login(req: LoginRequest, request: Request, response: Response):
@@ -234,6 +346,9 @@ async def login(req: LoginRequest, request: Request, response: Response):
             upsert=True
         )
         raise HTTPException(status_code=401, detail="Invalid email or password")
+
+    if user.get("auth_provider") == "email" and not user.get("email_verified", True):
+        raise HTTPException(status_code=403, detail="Please verify your email before signing in. Check your inbox.")
 
     if not verify_password(req.password, user["password_hash"]):
         result = await db.login_attempts.find_one_and_update(
@@ -298,9 +413,7 @@ async def refresh_token(request: Request, response: Response):
 # ======================== PASSWORD RESET ========================
 
 async def send_reset_email(email: str, token: str, user_name: str):
-    """Send password reset email via Resend."""
-    sender_email = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
-
+    """Send password reset email via Gmail SMTP."""
     html_content = f"""
     <div style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 560px; margin: 0 auto; padding: 40px 20px;">
         <div style="text-align: center; margin-bottom: 32px;">
@@ -309,40 +422,30 @@ async def send_reset_email(email: str, token: str, user_name: str):
         </div>
         <h2 style="font-size: 20px; color: #09090B; margin-bottom: 8px;">Reset your password</h2>
         <p style="color: #52525B; font-size: 15px; line-height: 1.6;">Hi {user_name},</p>
-        <p style="color: #52525B; font-size: 15px; line-height: 1.6;">We received a request to reset your password. Use the token below to set a new password:</p>
+        <p style="color: #52525B; font-size: 15px; line-height: 1.6;">We received a request to reset your password. Use the 6-digit code below to set a new password:</p>
         <div style="background: #F4F4F5; border: 1px solid #E4E4E7; border-radius: 8px; padding: 16px; text-align: center; margin: 24px 0;">
-            <code style="font-size: 16px; font-weight: 600; color: #09090B; letter-spacing: 0.5px; word-break: break-all;">{token}</code>
+            <code style="font-size: 24px; font-weight: 600; color: #09090B; letter-spacing: 2px; word-break: break-all;">{token}</code>
         </div>
-        <p style="color: #52525B; font-size: 15px; line-height: 1.6;">Copy this token and paste it in the password reset form on DevSync.</p>
-        <p style="color: #A1A1AA; font-size: 13px; margin-top: 32px;">This token expires in 1 hour. If you didn't request a password reset, you can safely ignore this email.</p>
+        <p style="color: #52525B; font-size: 15px; line-height: 1.6;">Enter this code in the password reset form on DevSync.</p>
+        <p style="color: #A1A1AA; font-size: 13px; margin-top: 32px;">This code expires in 1 hour. If you didn't request a password reset, you can safely ignore this email.</p>
         <hr style="border: none; border-top: 1px solid #E4E4E7; margin: 24px 0;" />
         <p style="color: #A1A1AA; font-size: 12px; text-align: center;">DevSync - Track your developer journey</p>
     </div>
     """
 
-    try:
-        params = {
-            "from": sender_email,
-            "to": [email],
-            "subject": "DevSync - Password Reset",
-            "html": html_content
-        }
-        result = await asyncio.to_thread(resend.Emails.send, params)
-        logger.info(f"Password reset email sent to {email}, id: {result.get('id', 'unknown')}")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send reset email to {email}: {e}")
-        return False
+    return await asyncio.to_thread(send_email_smtp, email, "DevSync - Password Reset", html_content)
 
 @api_router.post("/auth/forgot-password")
 async def forgot_password(req: ForgotPasswordRequest):
     email = req.email.strip().lower()
     user = await db.users.find_one({"email": email}, {"_id": 0})
     # Always return success to prevent email enumeration
-    if not user or user.get("auth_provider") == "google":
+    # Only skip users that have NO password_hash (pure Google-only accounts)
+    if not user or not user.get("password_hash"):
         return {"message": "If an account exists with that email, a reset link has been sent."}
 
-    token = secrets.token_urlsafe(32)
+    import random
+    token = f"{random.randint(100000, 999999)}"
     await db.password_reset_tokens.insert_one({
         "token": token,
         "user_id": user["user_id"],
@@ -356,15 +459,11 @@ async def forgot_password(req: ForgotPasswordRequest):
     user_name = user.get("name", email.split("@")[0])
     email_sent = await send_reset_email(email, token, user_name)
 
-    logger.info(f"Password reset token for {email}: {token}")
+    logger.debug(f"DEV ONLY reset token: {token}")
 
-    response_data = {"message": "If an account exists with that email, a reset link has been sent."}
-    # Include token in response as fallback (for dev/testing, or if email fails)
+    response_data = {"message": "If an account exists with that email, a reset token has been sent."}
     if not email_sent:
-        response_data["reset_token"] = token
-        response_data["email_note"] = "Email delivery failed. Use the token above to reset your password."
-    else:
-        response_data["email_sent"] = True
+        response_data["error"] = "Email delivery failed, please check your RESEND_API_KEY config"
 
     return response_data
 
@@ -397,6 +496,34 @@ async def reset_password(req: ResetPasswordRequest):
 
     return {"message": "Password reset successfully"}
 
+# ======================== CHANGE PASSWORD ========================
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+@api_router.post("/auth/change-password")
+async def change_password(req: ChangePasswordRequest, request: Request):
+    user = await get_current_user(request)
+    
+    full_user = await db.users.find_one({"user_id": user["user_id"]})
+    if not full_user or not full_user.get("password_hash"):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+        
+    if not verify_password(req.current_password, full_user["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+        
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        
+    new_hash = hash_password(req.new_password)
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"password_hash": new_hash}}
+    )
+    
+    return {"message": "Password changed successfully"}
+
 # ======================== PROFILE ========================
 
 @api_router.put("/profile")
@@ -423,29 +550,71 @@ async def update_profile(req: ProfileUpdateRequest, request: Request):
     updated_user.pop("password_hash", None)
     return updated_user
 
-# ======================== GOOGLE OAUTH (EMERGENT AUTH) ========================
+class CheckUsernameRequest(BaseModel):
+    username: str
+
+@api_router.post("/auth/check-username")
+async def check_username(req: CheckUsernameRequest):
+    import re
+    username = req.username.strip().lower()
+    if not re.match(r"^[a-z0-9_]{3,20}$", username):
+        return {"available": False, "error": "Username must be 3-20 chars, lowercase letters, numbers, and underscores only."}
+    
+    existing = await db.users.find_one({"username": username})
+    if existing:
+        return {"available": False}
+    return {"available": True}
+
+class UpdateUsernameRequest(BaseModel):
+    username: str
+
+@api_router.patch("/user/username")
+async def update_username(req: UpdateUsernameRequest, request: Request):
+    user = await get_current_user(request)
+    import re
+    username = req.username.strip().lower()
+    if not re.match(r"^[a-z0-9_]{3,20}$", username):
+        raise HTTPException(status_code=400, detail="Username must be 3-20 chars, lowercase letters, numbers, and underscores only.")
+        
+    existing = await db.users.find_one({"username": username})
+    if existing and existing["user_id"] != user["user_id"]:
+        raise HTTPException(status_code=400, detail="Username is already taken")
+        
+    await db.users.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"username": username}}
+    )
+    return {"message": "Username updated successfully"}
+
+# ======================== GOOGLE OAUTH (NATIVE) ========================
+
+class GoogleSessionRequest(BaseModel):
+    email: str
+    name: Optional[str] = None
+    picture: Optional[str] = ""
+    access_token: str
 
 @api_router.post("/auth/google/session")
-async def google_session(request: Request, response: Response):
-    body = await request.json()
-    session_id = body.get("session_id")
-    if not session_id:
-        raise HTTPException(status_code=400, detail="Missing session_id")
-
-    # Exchange session_id for user data from Emergent Auth
-    async with httpx.AsyncClient() as http_client:
+async def google_session(req: GoogleSessionRequest, response: Response):
+    # Verify the access_token by calling Google's userinfo endpoint
+    async with httpx.AsyncClient(timeout=10.0) as http_client:
         resp = await http_client.get(
-            "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data",
-            headers={"X-Session-ID": session_id}
+            "https://www.googleapis.com/oauth2/v3/userinfo",
+            headers={"Authorization": f"Bearer {req.access_token}"}
         )
         if resp.status_code != 200:
-            raise HTTPException(status_code=401, detail="Invalid session")
+            raise HTTPException(status_code=401, detail="Invalid Google access token")
         google_data = resp.json()
 
-    email = google_data["email"].lower()
-    name = google_data.get("name", email.split("@")[0])
-    picture = google_data.get("picture", "")
-    session_token_value = google_data.get("session_token", secrets.token_urlsafe(32))
+    # Verify the email from token matches what was sent
+    verified_email = google_data.get("email", "").lower()
+    if not verified_email or verified_email != req.email.strip().lower():
+        raise HTTPException(status_code=401, detail="Email mismatch — token verification failed")
+
+    email = verified_email
+    name = google_data.get("name") or req.name or email.split("@")[0]
+    picture = google_data.get("picture") or req.picture or ""
+    session_token_value = secrets.token_urlsafe(32)
 
     # Find or create user
     existing_user = await db.users.find_one({"email": email}, {"_id": 0})
@@ -522,6 +691,71 @@ async def connect_platform(req: PlatformConnectRequest, request: Request):
 
     return {"message": f"{platform} connected successfully", "connection": {k: v for k, v in connection.items() if k != "_id"}, "sync_data": sync_data}
 
+@api_router.post("/platforms/github/oauth/callback")
+async def github_oauth_callback(req: GitHubOAuthCallbackRequest, request: Request):
+    user = await get_current_user(request)
+    user_id = user["user_id"]
+
+    client_id = os.environ.get("GITHUB_CLIENT_ID")
+    client_secret = os.environ.get("GITHUB_CLIENT_SECRET")
+    
+    if not client_id or not client_secret:
+        raise HTTPException(status_code=500, detail="GitHub OAuth is not configured on the server")
+
+    # Exchange code for access_token
+    async with httpx.AsyncClient() as http_client:
+        resp = await http_client.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json"},
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "code": req.code
+            }
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to get GitHub access token")
+            
+        token_data = resp.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(status_code=400, detail=f"GitHub OAuth error: {token_data.get('error_description', 'No access token')}")
+
+        # Use access_token to fetch user info
+        user_resp = await http_client.get(
+            "https://api.github.com/user",
+            headers={"Authorization": f"token {access_token}", "Accept": "application/vnd.github.v3+json"}
+        )
+        if user_resp.status_code != 200:
+            raise HTTPException(status_code=400, detail="Failed to fetch GitHub profile")
+            
+        gh_user = user_resp.json()
+        gh_username = gh_user.get("login")
+        
+        if not gh_username:
+            raise HTTPException(status_code=400, detail="Failed to get GitHub username")
+
+        # Delete existing connection
+        await db.platform_connections.delete_many({"user_id": user_id, "platform": "github"})
+
+        connection = {
+            "connection_id": f"conn_{uuid.uuid4().hex[:12]}",
+            "user_id": user_id,
+            "platform": "github",
+            "username": gh_username,
+            "pat_token": access_token,
+            "connected_at": datetime.now(timezone.utc).isoformat(),
+            "last_synced": None,
+            "status": "connected"
+        }
+        await db.platform_connections.insert_one(connection)
+
+        # Initial sync
+        sync_data = await sync_platform_data(user_id, "github", gh_username, access_token)
+
+        return {"message": "GitHub connected successfully via OAuth", "connection": {k: v for k, v in connection.items() if k != "_id"}, "sync_data": sync_data}
+
 @api_router.get("/platforms")
 async def get_platforms(request: Request):
     user = await get_current_user(request)
@@ -583,6 +817,10 @@ async def sync_platform_data(user_id: str, platform: str, username: str, pat_tok
         await db.platform_data.delete_many({"user_id": user_id, "platform": platform})
         await db.platform_data.insert_one(data)
         data.pop("_id", None)
+        
+        # Auto-update goals based on new stats
+        asyncio.create_task(auto_update_goals_progress(user_id))
+        
         return data
     except Exception as e:
         logger.error(f"Error syncing {platform} for user {user_id}: {e}")
@@ -708,20 +946,58 @@ async def fetch_github_data(username: str, pat_token: str = None) -> dict:
             if isinstance(r, dict) and r.get("language"):
                 languages[r["language"]] = languages.get(r["language"], 0) + 1
 
-        # Fetch recent events for commit count
-        events_resp = await http_client.get(
-            f"https://api.github.com/users/{username}/events?per_page=100",
-            headers=headers
-        )
-        events = events_resp.json() if events_resp.status_code == 200 else []
         total_commits = 0
+        contribution_calendar = {}
         weekly_commits = {}
-        for event in events:
-            if isinstance(event, dict) and event.get("type") == "PushEvent":
-                commits_count = len(event.get("payload", {}).get("commits", []))
-                total_commits += commits_count
-                created = event.get("created_at", "")[:10]
-                weekly_commits[created] = weekly_commits.get(created, 0) + commits_count
+
+        graphql_query = """
+        {
+          user(login: "%s") {
+            contributionsCollection {
+              contributionCalendar {
+                totalContributions
+                weeks {
+                  contributionDays {
+                    date
+                    contributionCount
+                  }
+                }
+              }
+            }
+          }
+        }
+        """ % username
+
+        graphql_headers = {"Authorization": f"bearer {pat_token}"} if pat_token else {"Authorization": ""}
+        try:
+            graphql_resp = await http_client.post(
+                "https://api.github.com/graphql",
+                json={"query": graphql_query},
+                headers=graphql_headers,
+                timeout=15.0
+            )
+            if graphql_resp.status_code == 200:
+                cal_data = graphql_resp.json()["data"]["user"]["contributionsCollection"]["contributionCalendar"]
+                total_commits = cal_data["totalContributions"]
+                for week in cal_data["weeks"]:
+                    for day in week["contributionDays"]:
+                        date_str = day["date"]
+                        count = day["contributionCount"]
+                        contribution_calendar[date_str] = count
+                        weekly_commits[date_str] = count
+            else:
+                # Fallback to events REST API if GraphQL fails
+                events_resp = await http_client.get(f"https://api.github.com/users/{username}/events?per_page=100", headers=headers)
+                events = events_resp.json() if events_resp.status_code == 200 else []
+                for event in events:
+                    if isinstance(event, dict) and event.get("type") == "PushEvent":
+                        commits_count = len(event.get("payload", {}).get("commits", []))
+                        total_commits += commits_count
+                        created = event.get("created_at", "")[:10]
+                        weekly_commits[created] = weekly_commits.get(created, 0) + commits_count
+        except Exception as e:
+            logger.warning(f"GraphQL failed, falling back: {e}")
+
 
         return {
             "total_repos": user_info.get("public_repos", 0),
@@ -731,6 +1007,7 @@ async def fetch_github_data(username: str, pat_token: str = None) -> dict:
             "total_commits": total_commits,
             "languages": languages,
             "weekly_commits": weekly_commits,
+            "contribution_calendar": contribution_calendar,
             "bio": user_info.get("bio", ""),
             "avatar_url": user_info.get("avatar_url", "")
         }
@@ -837,7 +1114,7 @@ async def get_heatmap(request: Request):
         heatmap_data.append({
             "date": day_key,
             "count": heatmap.get(day_key, 0),
-            "weekday": d.weekday(),
+            "weekday": (d.weekday() + 1) % 7,
             "month": d.month
         })
 
@@ -853,7 +1130,23 @@ async def get_dashboard(request: Request):
     connections = await db.platform_connections.find({"user_id": user_id}, {"_id": 0}).to_list(10)
     platform_data_list = await db.platform_data.find({"user_id": user_id}, {"_id": 0}).to_list(10)
 
-    # Aggregate stats
+    days = request.query_params.get("days")
+    from_date = request.query_params.get("from")
+    to_date = request.query_params.get("to")
+
+    today = datetime.now(timezone.utc).date()
+    start_date = None
+    end_date = today
+
+    if from_date and to_date:
+        try:
+            start_date = datetime.strptime(from_date, "%Y-%m-%d").date()
+            end_date = datetime.strptime(to_date, "%Y-%m-%d").date()
+        except:
+            pass
+    elif days and days.isdigit():
+        start_date = today - timedelta(days=int(days))
+
     total_problems = 0
     total_commits = 0
     streak = 0
@@ -868,24 +1161,37 @@ async def get_dashboard(request: Request):
                 try:
                     dt = datetime.fromtimestamp(int(ts), tz=timezone.utc)
                     day_key = dt.strftime("%Y-%m-%d")
+                    dt_date = dt.date()
+                    if start_date and (dt_date < start_date or dt_date > end_date):
+                        continue
                     weekly_data[day_key] = weekly_data.get(day_key, 0) + count
                 except:
                     pass
         elif pd.get("platform") == "github":
-            total_commits += pd.get("total_commits", 0)
             wc = pd.get("weekly_commits", {})
-            for day, count in wc.items():
-                weekly_data[day] = weekly_data.get(day, 0) + count
+            for day_key, count in wc.items():
+                try:
+                    dt_date = datetime.strptime(day_key, "%Y-%m-%d").date()
+                    if start_date and (dt_date < start_date or dt_date > end_date):
+                        continue
+                    weekly_data[day_key] = weekly_data.get(day_key, 0) + count
+                    total_commits += count
+                except:
+                    weekly_data[day_key] = weekly_data.get(day_key, 0) + count
+                    total_commits += count
         elif pd.get("platform") == "codeforces":
             total_problems += pd.get("problems_solved", 0)
         elif pd.get("platform") == "codechef":
             total_problems += pd.get("problems_solved", 0)
 
-    # Build weekly graph (last 7 days)
-    today = datetime.now(timezone.utc).date()
+    # Build weekly graph (based on selected period, max 7 days for the chart)
+    graph_days = int(days) if days and days.isdigit() and int(days) <= 7 else 7
+    if from_date and to_date and start_date:
+        graph_days = min(7, (end_date - start_date).days + 1)
+        
     weekly_graph = []
-    for i in range(6, -1, -1):
-        d = today - timedelta(days=i)
+    for i in range(graph_days - 1, -1, -1):
+        d = end_date - timedelta(days=i)
         day_key = d.strftime("%Y-%m-%d")
         weekly_graph.append({
             "date": day_key,
@@ -893,7 +1199,6 @@ async def get_dashboard(request: Request):
             "activity": weekly_data.get(day_key, 0)
         })
 
-    # Remove sensitive data from connections
     clean_connections = []
     for conn in connections:
         clean_connections.append({
@@ -912,6 +1217,35 @@ async def get_dashboard(request: Request):
         "connections": clean_connections,
         "platform_data": platform_data_list
     }
+
+# LOCAL AI — powered by Ollama (https://ollama.com)
+
+async def call_ollama(prompt: str, expect_json: bool = False) -> str:
+    """Call local Ollama LLM. Returns empty string if unavailable."""
+    try:
+        ollama_url = os.environ.get("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        model = os.environ.get("OLLAMA_MODEL", "mistral")
+        async with httpx.AsyncClient(timeout=90.0) as http_client:
+            ollama_resp = await http_client.post(
+                f"{ollama_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False
+                }
+            )
+            if ollama_resp.status_code == 200:
+                result = ollama_resp.json().get("response", "").strip()
+                if expect_json:
+                    # Strip markdown code fences if present
+                    result = result.replace("```json", "").replace("```", "").strip()
+                return result
+    except httpx.ConnectError:
+        logger.warning("Ollama not running, using static fallback. Start with: ollama serve")
+        return ""
+    except Exception as e:
+        logger.error(f"Ollama AI error: {e}")
+    return ""
 
 # ======================== READINESS SCORE ========================
 
@@ -951,11 +1285,38 @@ async def get_readiness(request: Request):
     # Weighted total
     total_score = round(dsa_score * 0.45 + project_score * 0.30 + consistency_score * 0.25, 1)
 
+    # Generate AI recommendations for each score component
+    dsa_rec = f"You've solved {dsa_problems} DSA problems. Keep pushing to reach 300 for a perfect score!"
+    projects_rec = "Build more projects and push commits regularly to boost your project score."
+    consistency_rec = f"Your current streak is {streak} days. Aim for a 30-day streak to maximize consistency!"
+
+    prompt = f"""You are DevSync AI. Give a short 1-2 sentence personalized recommendation for each of these readiness score components. Return ONLY valid JSON with keys: dsa, projects, consistency.
+
+Scores:
+- DSA score: {round(dsa_score, 1)}/100 ({dsa_problems} problems solved)
+- Projects score: {round(project_score, 1)}/100
+- Consistency score: {round(consistency_score, 1)}/100 (streak: {streak} days)
+
+Return ONLY the JSON object."""
+    
+    response_text = await call_ollama(prompt, expect_json=True)
+    if response_text:
+        try:
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            if json_start >= 0 and json_end > json_start:
+                recs = json.loads(response_text[json_start:json_end])
+                dsa_rec = recs.get("dsa", dsa_rec)
+                projects_rec = recs.get("projects", projects_rec)
+                consistency_rec = recs.get("consistency", consistency_rec)
+        except Exception as e:
+            logger.error(f"Readiness AI parse error: {e}")
+
     return {
         "total_score": total_score,
-        "dsa": {"score": round(dsa_score, 1), "weight": 45, "problems_solved": dsa_problems},
-        "projects": {"score": round(project_score, 1), "weight": 30},
-        "consistency": {"score": round(consistency_score, 1), "weight": 25, "streak": streak}
+        "dsa": {"score": round(dsa_score, 1), "weight": 45, "problems_solved": dsa_problems, "ai_recommendation": dsa_rec},
+        "projects": {"score": round(project_score, 1), "weight": 30, "ai_recommendation": projects_rec},
+        "consistency": {"score": round(consistency_score, 1), "weight": 25, "streak": streak, "ai_recommendation": consistency_rec}
     }
 
 # ======================== AI INSIGHTS ========================
@@ -1003,41 +1364,55 @@ async def get_insights(request: Request):
             context_parts.append(f"CodeChef: Rating {pd.get('rating', 0)}, Max Rating: {pd.get('max_rating', 0)}, Stars: {pd.get('stars', '0')}, {pd.get('problems_solved', 0)} problems solved")
 
     context = "\n".join(context_parts)
+    
+    logger.info(f"Generating insights for user {user_id} with {len(platform_data_list)} platforms")
 
-    try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
+    # LOCAL AI — powered by Ollama (https://ollama.com)
+    prompt = f"""You are DevSync AI, a developer growth analyst. Analyze this developer's data.
 
-        chat = LlmChat(
-            api_key=os.environ.get("EMERGENT_LLM_KEY", ""),
-            session_id=f"insights_{user_id}_{datetime.now(timezone.utc).strftime('%Y%m%d')}",
-            system_message="You are DevSync AI, a developer growth analyst. Analyze coding activity data and provide actionable insights. Be specific and encouraging. Return JSON with keys: insights (array of 3-4 insight strings), weaknesses (array of 2-3 weakness strings), suggestions (array of 3-4 actionable suggestion strings)."
-        ).with_model("openai", "gpt-5.2")
+Developer Stats:
+{context}
 
-        user_message = UserMessage(text=f"Analyze this developer's coding activity and provide insights:\n\n{context}\n\nReturn valid JSON only.")
-        response_text = await chat.send_message(user_message)
+Return ONLY a valid JSON object with exactly these three keys:
+- "insights": array of exactly 3 strings — specific strengths based on their actual numbers
+- "weaknesses": array of exactly 2 strings — specific areas needing improvement  
+- "suggestions": array of exactly 3 strings — concrete actionable steps for this week (mention specific numbers)
 
-        # Parse JSON from response
+Rules:
+- Reference actual numbers from their stats (e.g. "You've solved 45 medium problems")
+- Suggestions must be specific (e.g. "Solve 3 medium graph problems" not "practice graphs")
+- Be encouraging but honest
+- Return ONLY the JSON object. No markdown. No explanation. No code fences."""
+
+    response_text = await call_ollama(prompt, expect_json=True)
+    insights_data = None
+    
+    if response_text:
         try:
-            # Try to extract JSON from the response
             json_start = response_text.find("{")
             json_end = response_text.rfind("}") + 1
             if json_start >= 0 and json_end > json_start:
                 insights_data = json.loads(response_text[json_start:json_end])
-            else:
-                insights_data = {"insights": [response_text], "weaknesses": [], "suggestions": []}
-        except json.JSONDecodeError:
-            insights_data = {"insights": [response_text], "weaknesses": [], "suggestions": []}
+        except Exception:
+            pass
 
-    except Exception as e:
-        logger.error(f"AI Insights error: {e}")
+    if not insights_data or not insights_data.get("insights"):
+        # Static fallback — always works
         insights_data = {
             "insights": [
-                "Based on your activity, you're making steady progress!",
-                "Consider practicing more medium and hard problems to improve.",
-                "Regular coding habits will significantly boost your skills."
+                "You've been consistently active across your connected platforms.",
+                "Your problem-solving history shows steady growth.",
+                "Keep your current streak going — consistency is your biggest asset."
             ],
-            "weaknesses": ["Could not generate AI insights at this time."],
-            "suggestions": ["Connect more platforms for comprehensive analysis.", "Try solving at least one problem daily."]
+            "weaknesses": [
+                "Connect more platforms for deeper AI analysis.",
+                "Try solving harder difficulty problems to level up."
+            ],
+            "suggestions": [
+                "Solve at least 1 medium difficulty problem today.",
+                "Make at least 1 GitHub commit this week.",
+                "Attempt one Codeforces contest this weekend."
+            ]
         }
 
     result = {
@@ -1065,152 +1440,332 @@ async def regenerate_insights(request: Request):
 
 @api_router.get("/goals")
 async def get_goals(request: Request):
-    user = await get_current_user(request)
-    goals = await db.goals.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
-    return {"goals": goals}
+    try:
+        user = await get_current_user(request)
+        goals = await db.goals.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
+        return {"goals": goals}
+    except Exception as e:
+        logger.error(f"Error fetching goals: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error fetching goals")
 
 @api_router.post("/goals")
 async def create_goal(goal: GoalCreate, request: Request):
-    user = await get_current_user(request)
-    goal_doc = {
-        "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-        "user_id": user["user_id"],
-        "title": goal.title,
-        "description": goal.description,
-        "target_value": goal.target_value,
-        "current_value": 0,
-        "category": goal.category,
-        "completed": False,
-        "created_at": datetime.now(timezone.utc).isoformat()
-    }
-    await db.goals.insert_one(goal_doc)
-    goal_doc.pop("_id", None)
-    return goal_doc
+    try:
+        user = await get_current_user(request)
+        goal_doc = {
+            "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
+            "user_id": user["user_id"],
+            "title": goal.title,
+            "description": goal.description,
+            "target_value": goal.target_value,
+            "current_value": 0,
+            "category": goal.category,
+            "completed": False,
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.goals.insert_one(goal_doc)
+        goal_doc.pop("_id", None)
+        return goal_doc
+    except Exception as e:
+        logger.error(f"Error creating goal: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error creating goal")
 
 @api_router.put("/goals/{goal_id}")
 async def update_goal(goal_id: str, update: GoalUpdate, request: Request):
-    user = await get_current_user(request)
-    update_dict = {}
-    if update.current_value is not None:
-        update_dict["current_value"] = update.current_value
-    if update.completed is not None:
-        update_dict["completed"] = update.completed
+    try:
+        user = await get_current_user(request)
+        update_dict = {}
+        if update.current_value is not None:
+            update_dict["current_value"] = update.current_value
+        if update.completed is not None:
+            update_dict["completed"] = update.completed
 
-    if not update_dict:
-        raise HTTPException(status_code=400, detail="Nothing to update")
+        if not update_dict:
+            raise HTTPException(status_code=400, detail="Nothing to update")
 
-    result = await db.goals.update_one(
-        {"goal_id": goal_id, "user_id": user["user_id"]},
-        {"$set": update_dict}
-    )
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Goal not found")
+        result = await db.goals.update_one(
+            {"goal_id": goal_id, "user_id": user["user_id"]},
+            {"$set": update_dict}
+        )
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Goal not found")
 
-    goal = await db.goals.find_one({"goal_id": goal_id, "user_id": user["user_id"]}, {"_id": 0})
-    return goal
+        goal = await db.goals.find_one({"goal_id": goal_id, "user_id": user["user_id"]}, {"_id": 0})
+        return goal
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating goal {goal_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error updating goal")
 
 @api_router.delete("/goals/{goal_id}")
 async def delete_goal(goal_id: str, request: Request):
-    user = await get_current_user(request)
-    result = await db.goals.delete_one({"goal_id": goal_id, "user_id": user["user_id"]})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Goal not found")
-    return {"message": "Goal deleted"}
+    try:
+        user = await get_current_user(request)
+        result = await db.goals.delete_one({"goal_id": goal_id, "user_id": user["user_id"]})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Goal not found")
+        return {"message": "Goal deleted"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting goal {goal_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal server error deleting goal")
+
+async def generate_new_goals_for_user(user_id: str) -> dict:
+    platform_data_list = await db.platform_data.find({"user_id": user_id}, {"_id": 0}).to_list(10)
+    
+    easy = 0
+    medium = 0
+    hard = 0
+    cf_rating = 0
+
+    for pd in platform_data_list:
+        if pd.get("platform") == "leetcode":
+            easy = pd.get("easy", 0)
+            medium = pd.get("medium", 0)
+            hard = pd.get("hard", 0)
+        elif pd.get("platform") == "codeforces":
+            cf_rating = max(cf_rating, pd.get("rating", 0))
+
+    total_lc = easy + medium + hard
+    if total_lc > 200 or cf_rating > 1600:
+        level = "Advanced"
+    elif (total_lc >= 50 and total_lc <= 200) or (cf_rating >= 1000 and cf_rating <= 1600):
+        level = "Intermediate"
+    else:
+        level = "Beginner"
+
+    beginner_goals = [
+        {"title": "Solve 50 Easy Problems", "category": "dsa", "target_value": 50, "description": "Build your foundation with easy problems"},
+        {"title": "Set Up GitHub Profile", "category": "projects", "target_value": 1, "description": "Create a professional GitHub presence"},
+        {"title": "7-Day Coding Streak", "category": "consistency", "target_value": 7, "description": "Code every day for a week"},
+        {"title": "Solve First Medium Problem", "category": "dsa", "target_value": 1, "description": "Level up beyond easy problems"},
+        {"title": "Create Your First Repository", "category": "projects", "target_value": 1, "description": "Start building your portfolio"},
+        {"title": "Register on Codeforces", "category": "dsa", "target_value": 1, "description": "Join competitive programming"},
+        {"title": "Solve 10 Array Problems", "category": "dsa", "target_value": 10, "description": "Master the most common interview topic"},
+        {"title": "30-Day Coding Streak", "category": "consistency", "target_value": 30, "description": "Build an unstoppable habit"}
+    ]
+
+    intermediate_goals = [
+        {"title": "Solve 100 Medium Problems", "category": "dsa", "target_value": 100, "description": "Tackle interview-level challenges"},
+        {"title": "Reach Codeforces Rating 1200", "category": "dsa", "target_value": 1200, "description": "Hit Specialist rank on Codeforces"},
+        {"title": "Build 3 Portfolio Projects", "category": "projects", "target_value": 3, "description": "Show employers what you can build"},
+        {"title": "Solve 20 Hard Problems", "category": "dsa", "target_value": 20, "description": "Push your limits with hard problems"},
+        {"title": "100 GitHub Commits This Month", "category": "projects", "target_value": 100, "description": "Show consistent coding activity"},
+        {"title": "Participate in 5 CF Contests", "category": "dsa", "target_value": 5, "description": "Compete and improve under pressure"},
+        {"title": "Master Dynamic Programming", "category": "dsa", "target_value": 15, "description": "Solve 15 DP problems"},
+        {"title": "60-Day Coding Streak", "category": "consistency", "target_value": 60, "description": "Two months of daily coding"}
+    ]
+
+    advanced_goals = [
+        {"title": "Reach Codeforces Expert (1600+)", "category": "dsa", "target_value": 1600, "description": "Hit Expert rank on Codeforces"},
+        {"title": "Solve 50 Hard LeetCode Problems", "category": "dsa", "target_value": 50, "description": "Master the hardest interview questions"},
+        {"title": "Open Source Contribution", "category": "projects", "target_value": 5, "description": "Contribute to 5 open source projects"},
+        {"title": "LeetCode Contest Rating 1800+", "category": "dsa", "target_value": 1800, "description": "Compete at a high level on LeetCode"},
+        {"title": "Build a Full-Stack Project", "category": "projects", "target_value": 1, "description": "Ship a complete product"},
+        {"title": "Solve 500 Total Problems", "category": "dsa", "target_value": 500, "description": "Reach 500 total problems solved"},
+        {"title": "100-Day Coding Streak", "category": "consistency", "target_value": 100, "description": "Elite-level consistency"},
+        {"title": "Mentor a Junior Developer", "category": "projects", "target_value": 1, "description": "Give back to the community"}
+    ]
+
+    presets = beginner_goals
+    if level == "Intermediate":
+        presets = intermediate_goals
+    elif level == "Advanced":
+        presets = advanced_goals
+
+    existing_goals = await db.goals.find({"user_id": user_id}).to_list(100)
+    existing_titles = [g["title"] for g in existing_goals]
+
+    new_goals = []
+    for p in presets:
+        if p["title"] not in existing_titles:
+            goal_id = f"goal_{uuid.uuid4().hex[:12]}"
+            
+            # Request Ollama for personalized description
+            prompt = f"User has solved {easy} easy, {medium} medium, {hard} hard LeetCode problems. CF rating: {cf_rating}.\nThey have a new goal: \"{p['title']}\". Write ONE motivational sentence (max 15 words) for why this goal matters for them specifically.\nReturn only the sentence."
+            ai_desc = await call_ollama(prompt, expect_json=False)
+            desc = ai_desc.strip() if ai_desc else p["description"]
+            
+            goal_doc = {
+                "goal_id": goal_id,
+                "user_id": user_id,
+                "title": p["title"],
+                "description": desc,
+                "target_value": p["target_value"],
+                "current_value": 0,
+                "category": p["category"],
+                "completed": False,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            new_goals.append(goal_doc)
+
+    for g in new_goals:
+        await db.goals.update_one(
+            {"user_id": user_id, "title": g["title"]},
+            {"$setOnInsert": g},
+            upsert=True
+        )
+        g.pop("_id", None)
+
+    return {"goals": new_goals}
+
+async def auto_update_goals_progress(user_id: str):
+    """Automatically updates goal progress based on latest platform data."""
+    try:
+        platform_data_list = await db.platform_data.find({"user_id": user_id}, {"_id": 0}).to_list(10)
+        connections = await db.platform_connections.find({"user_id": user_id}, {"_id": 0}).to_list(10)
+        active_goals = await db.goals.find({"user_id": user_id, "completed": False}).to_list(100)
+
+        if not active_goals:
+            return
+
+        # Calculate streak from aggregated calendar
+        heatmap = {}
+        for pd in platform_data_list:
+            if pd.get("platform") == "leetcode":
+                cal = pd.get("submission_calendar", {})
+                for ts_str, count in cal.items():
+                    try:
+                        dt = datetime.fromtimestamp(int(ts_str), tz=timezone.utc).date()
+                        day_key = dt.strftime("%Y-%m-%d")
+                        heatmap[day_key] = heatmap.get(day_key, 0) + count
+                    except:
+                        pass
+            elif pd.get("platform") == "github":
+                wc = pd.get("weekly_commits", {})
+                for day, count in wc.items():
+                    heatmap[day] = heatmap.get(day, 0) + count
+
+        today = datetime.now(timezone.utc).date()
+        current_streak = 0
+        current_date = today
+        while True:
+            day_key = current_date.strftime("%Y-%m-%d")
+            if heatmap.get(day_key, 0) > 0:
+                current_streak += 1
+                current_date -= timedelta(days=1)
+            elif current_date == today:
+                # If no activity today, check yesterday before breaking
+                current_date -= timedelta(days=1)
+            else:
+                break
+
+        # Calculate metrics
+        metrics = {
+            "easy": 0, "medium": 0, "hard": 0, "total_lc": 0,
+            "cf_rating": 0, "cf_contests": 0,
+            "gh_repos": 0, "gh_commits_30d": 0, "gh_commits_total": 0,
+            "streak": current_streak,
+            "gh_connected": any(c.get("platform") == "github" for c in connections),
+            "cf_connected": any(c.get("platform") == "codeforces" for c in connections)
+        }
+
+        for pd in platform_data_list:
+            if pd.get("platform") == "leetcode":
+                metrics["easy"] = pd.get("easy", 0)
+                metrics["medium"] = pd.get("medium", 0)
+                metrics["hard"] = pd.get("hard", 0)
+                metrics["total_lc"] = metrics["easy"] + metrics["medium"] + metrics["hard"]
+            elif pd.get("platform") == "codeforces":
+                metrics["cf_rating"] = max(metrics["cf_rating"], pd.get("rating", 0))
+                metrics["cf_contests"] = pd.get("contests_participated", 0)
+            elif pd.get("platform") == "github":
+                metrics["gh_repos"] = pd.get("total_repos", 0)
+                metrics["gh_commits_total"] = pd.get("total_commits", 0)
+                # Calculate commits in last 30 days
+                wc = pd.get("weekly_commits", {})
+                thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).date()
+                recent_commits = sum(count for date_str, count in wc.items() if datetime.strptime(date_str, "%Y-%m-%d").date() >= thirty_days_ago)
+                metrics["gh_commits_30d"] = recent_commits
+
+        # Map metrics to specific goal titles (or patterns)
+        def get_metric_for_goal(title: str) -> int:
+            title_lower = title.lower()
+            if "easy problem" in title_lower:
+                return metrics["easy"]
+            if "medium problem" in title_lower:
+                return metrics["medium"]
+            if "hard problem" in title_lower:
+                return metrics["hard"]
+            if "total problem" in title_lower:
+                return metrics["total_lc"]
+            if "codeforces rating" in title_lower or "codeforces expert" in title_lower:
+                return metrics["cf_rating"]
+            if "cf contest" in title_lower:
+                return metrics["cf_contests"]
+            if "github commits" in title_lower and "month" in title_lower:
+                return metrics["gh_commits_30d"]
+            if "portfolio project" in title_lower or "open source" in title_lower or "first repository" in title_lower or "full-stack project" in title_lower:
+                return metrics["gh_repos"]
+            if "streak" in title_lower:
+                return metrics["streak"]
+            if "set up github" in title_lower:
+                return 1 if metrics["gh_connected"] else 0
+            if "register on codeforces" in title_lower:
+                return 1 if metrics["cf_connected"] else 0
+            # For legacy dynamic goals like "Solve 27 more LeetCode problems" we can't accurately auto-update 
+            # without knowing the starting baseline, so we skip them.
+            return -1
+
+        any_completed = False
+        for goal in active_goals:
+            new_val = get_metric_for_goal(goal["title"])
+            if new_val >= 0 and new_val != goal.get("current_value"):
+                is_completed = new_val >= goal["target_value"]
+                if is_completed:
+                    any_completed = True
+                
+                await db.goals.update_one(
+                    {"_id": goal["_id"]},
+                    {"$set": {
+                        "current_value": new_val,
+                        "completed": is_completed
+                    }}
+                )
+
+        if any_completed:
+            # Generate new goals automatically to replace the completed ones
+            await generate_new_goals_for_user(user_id)
+            
+    except Exception as e:
+        logger.error(f"Error in auto_update_goals_progress: {e}", exc_info=True)
 
 @api_router.post("/goals/auto-generate")
 async def auto_generate_goals(request: Request):
     user = await get_current_user(request)
-    user_id = user["user_id"]
+    return await generate_new_goals_for_user(user["user_id"])
 
-    platform_data_list = await db.platform_data.find({"user_id": user_id}, {"_id": 0}).to_list(10)
-
-    goals = []
-    for pd in platform_data_list:
-        if pd.get("platform") == "leetcode":
-            problems = pd.get("problems_solved", 0)
-            goals.append({
-                "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "title": f"Solve {max(10, (problems // 50 + 1) * 50 - problems)} more LeetCode problems",
-                "description": f"You've solved {problems} problems. Push to the next milestone!",
-                "target_value": max(10, (problems // 50 + 1) * 50 - problems),
-                "current_value": 0,
-                "category": "dsa",
-                "completed": False,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
-            if pd.get("hard", 0) < 10:
-                goals.append({
-                    "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-                    "user_id": user_id,
-                    "title": "Solve 5 Hard LeetCode Problems",
-                    "description": "Challenge yourself with hard problems to sharpen advanced skills.",
-                    "target_value": 5,
-                    "current_value": 0,
-                    "category": "dsa",
-                    "completed": False,
-                    "created_at": datetime.now(timezone.utc).isoformat()
-                })
-        elif pd.get("platform") == "github":
-            repos = pd.get("total_repos", 0)
-            goals.append({
-                "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "title": "Contribute to 3 Open Source Projects",
-                "description": f"With {repos} repos, start contributing to the community.",
-                "target_value": 3,
-                "current_value": 0,
-                "category": "projects",
-                "completed": False,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
-        elif pd.get("platform") == "codeforces":
-            rating = pd.get("rating", 0)
-            target = ((rating // 100) + 1) * 100 if rating > 0 else 1200
-            goals.append({
-                "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "title": f"Reach Codeforces Rating {target}",
-                "description": f"Current rating: {rating}. Push to the next level!",
-                "target_value": target,
-                "current_value": rating,
-                "category": "dsa",
-                "completed": False,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
-        elif pd.get("platform") == "codechef":
-            rating = pd.get("rating", 0)
-            target = ((rating // 100) + 1) * 100 if rating > 0 else 1200
-            goals.append({
-                "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-                "user_id": user_id,
-                "title": f"Reach CodeChef Rating {target}",
-                "description": f"Current rating: {rating}. Keep competing!",
-                "target_value": target,
-                "current_value": rating,
-                "category": "dsa",
-                "completed": False,
-                "created_at": datetime.now(timezone.utc).isoformat()
-            })
-
+@api_router.get("/goals/progress-analysis")
+async def get_goal_progress_analysis(request: Request):
+    user = await get_current_user(request)
+    goals = await db.goals.find({"user_id": user["user_id"], "completed": False}).to_list(10)
+    
     if not goals:
-        goals.append({
-            "goal_id": f"goal_{uuid.uuid4().hex[:12]}",
-            "user_id": user_id,
-            "title": "Connect Your First Platform",
-            "description": "Link LeetCode, GitHub, or Codeforces to start tracking your progress.",
-            "target_value": 1,
-            "current_value": 0,
-            "category": "general",
-            "completed": False,
-            "created_at": datetime.now(timezone.utc).isoformat()
-        })
+        return {"tips": {}}
 
-    for g in goals:
-        await db.goals.insert_one(g)
-        g.pop("_id", None)
+    goals_list_str = "\n".join([f"- {g['title']}: {g['current_value']}/{g['target_value']}" for g in goals])
+    
+    prompt = f"""You are DevSync AI, a motivational developer coach. Give a short, encouraging 1-sentence tip on how to make progress for each of the following active goals. Return ONLY a valid JSON object where keys are the exact goal titles and values are the string tips.
 
-    return {"goals": goals}
+Goals:
+{goals_list_str}
+
+Return ONLY the JSON object, no markdown."""
+
+    response_text = await call_ollama(prompt, expect_json=True)
+    tips = {}
+    if response_text:
+        try:
+            json_start = response_text.find("{")
+            json_end = response_text.rfind("}") + 1
+            if json_start >= 0 and json_end > json_start:
+                tips = json.loads(response_text[json_start:json_end])
+        except Exception:
+            pass
+
+    return {"tips": tips}
 
 # ======================== AUTO-SYNC SCHEDULER ========================
 
@@ -1245,6 +1800,168 @@ async def auto_sync_all_platforms():
         except Exception as e:
             logger.error(f"Auto-sync scheduler error: {e}")
 
+# ======================== PROBLEMS ========================
+
+@api_router.get("/problems/recommendations")
+async def get_problem_recommendations(request: Request):
+    user = await get_current_user(request)
+    platform_data_list = await db.platform_data.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(10)
+    
+    solved_docs = await db.solved_problems.find({"user_id": user["user_id"]}).to_list(1000)
+    solved_slugs = {doc["slug"] for doc in solved_docs}
+
+    # Check cached problems (valid for 24 hours)
+    cached = await db.problem_recommendations.find_one({"user_id": user["user_id"]}, {"_id": 0})
+    if cached:
+        generated_at = cached.get("generated_at", "")
+        if generated_at:
+            try:
+                gen_time = datetime.fromisoformat(generated_at)
+                if gen_time.tzinfo is None:
+                    gen_time = gen_time.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - gen_time < timedelta(hours=24):
+                    recs = cached.get("recommendations", [])
+                    # Append solved status
+                    for r in recs:
+                        r["solved"] = r.get("slug") in solved_slugs
+                    return {"recommendations": recs, "level": cached.get("level", "Beginner")}
+            except:
+                pass
+
+    easy = 0
+    medium = 0
+    hard = 0
+    cf_rating = 0
+
+    for pd in platform_data_list:
+        if pd.get("platform") == "leetcode":
+            easy = pd.get("easy", 0)
+            medium = pd.get("medium", 0)
+            hard = pd.get("hard", 0)
+        elif pd.get("platform") == "codeforces":
+            cf_rating = pd.get("rating", 0)
+
+    # Determine user level
+    if hard > 30 or cf_rating > 1600:
+        level = "Advanced"
+    elif medium > 100 and (hard >= 10 and hard <= 30):
+        level = "Hard-Intermediate"
+    elif (medium >= 30 and medium <= 100) and hard < 10:
+        level = "Intermediate"
+    elif (easy >= 50 and easy <= 150) and medium < 30:
+        level = "Easy-Intermediate"
+    else:
+        level = "Beginner"
+
+    prompt = f"""A developer has solved {easy} easy, {medium} medium, {hard} hard LeetCode problems.
+Codeforces rating: {cf_rating}. Their level is: {level}.
+
+Recommend exactly 10 LeetCode problems appropriate for their level.
+Vary the topics: include Arrays, Strings, Trees, Graphs, DP, Binary Search, Stack/Queue, Greedy, Backtracking, Math.
+
+Return ONLY a JSON array of exactly 10 objects. Each object must have:
+- "title": exact LeetCode problem title
+- "difficulty": "Easy", "Medium", or "Hard"  
+- "topic": main topic category
+- "reason": one specific sentence (max 12 words) why this fits their level
+- "slug": the leetcode URL slug (e.g. "two-sum", "longest-substring-without-repeating-characters")
+
+No markdown. No explanation. Only the JSON array."""
+
+    response_text = await call_ollama(prompt, expect_json=True)
+    recs = []
+    
+    if response_text:
+        try:
+            json_start = response_text.find("[")
+            json_end = response_text.rfind("]") + 1
+            if json_start >= 0 and json_end > json_start:
+                recs = json.loads(response_text[json_start:json_end])
+        except Exception as e:
+            logger.error(f"Problem recommendations parse error: {e}")
+
+    if not recs or len(recs) == 0:
+        # Static fallback
+        if level in ("Beginner", "Easy-Intermediate"):
+            recs = [
+                {"title": "Two Sum", "difficulty": "Easy", "topic": "Arrays", "slug": "two-sum", "reason": "Fundamental hash map pattern."},
+                {"title": "Valid Anagram", "difficulty": "Easy", "topic": "Strings", "slug": "valid-anagram", "reason": "Great for learning character counting."},
+                {"title": "Binary Search", "difficulty": "Easy", "topic": "Binary Search", "slug": "binary-search", "reason": "Core algorithm every developer needs."},
+                {"title": "Reverse Linked List", "difficulty": "Easy", "topic": "Linked List", "slug": "reverse-linked-list", "reason": "Essential pointer manipulation practice."},
+                {"title": "Best Time to Buy and Sell Stock", "difficulty": "Easy", "topic": "Arrays", "slug": "best-time-to-buy-and-sell-stock", "reason": "Introduction to sliding window approach."},
+                {"title": "Merge Two Sorted Lists", "difficulty": "Easy", "topic": "Linked List", "slug": "merge-two-sorted-lists", "reason": "Good practice for list merging."},
+                {"title": "Valid Parentheses", "difficulty": "Easy", "topic": "Stack", "slug": "valid-parentheses", "reason": "Classic stack problem."},
+                {"title": "Climbing Stairs", "difficulty": "Easy", "topic": "Dynamic Programming", "slug": "climbing-stairs", "reason": "Learn basic DP transitions."},
+                {"title": "Maximum Subarray", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "maximum-subarray", "reason": "Kadane's algorithm is a must-know."},
+                {"title": "Contains Duplicate", "difficulty": "Easy", "topic": "Arrays", "slug": "contains-duplicate", "reason": "Learn to use hash sets."}
+            ]
+        elif level in ("Intermediate", "Hard-Intermediate"):
+            recs = [
+                {"title": "Number of Islands", "difficulty": "Medium", "topic": "Graphs", "slug": "number-of-islands", "reason": "Classic BFS/DFS traversal problem."},
+                {"title": "Coin Change", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "coin-change", "reason": "Introduction to 1D DP."},
+                {"title": "Trie (Prefix Tree)", "difficulty": "Medium", "topic": "Trie", "slug": "implement-trie-prefix-tree", "reason": "Important data structure for string search."},
+                {"title": "Course Schedule", "difficulty": "Medium", "topic": "Graphs", "slug": "course-schedule", "reason": "Learn topological sort."},
+                {"title": "Longest Substring Without Repeating Characters", "difficulty": "Medium", "topic": "Strings", "slug": "longest-substring-without-repeating-characters", "reason": "Essential sliding window problem."},
+                {"title": "3Sum", "difficulty": "Medium", "topic": "Arrays", "slug": "3sum", "reason": "Two pointers approach on sorted arrays."},
+                {"title": "Binary Tree Level Order Traversal", "difficulty": "Medium", "topic": "Trees", "slug": "binary-tree-level-order-traversal", "reason": "Learn BFS on trees."},
+                {"title": "Word Break", "difficulty": "Medium", "topic": "Dynamic Programming", "slug": "word-break", "reason": "Classic DP on strings."},
+                {"title": "Pacific Atlantic Water Flow", "difficulty": "Medium", "topic": "Graphs", "slug": "pacific-atlantic-water-flow", "reason": "Multi-source BFS practice."},
+                {"title": "Merge Intervals", "difficulty": "Medium", "topic": "Arrays", "slug": "merge-intervals", "reason": "Sorting and interval merging."}
+            ]
+        else:
+            recs = [
+                {"title": "Alien Dictionary", "difficulty": "Hard", "topic": "Graphs", "slug": "alien-dictionary", "reason": "Complex topological sort application."},
+                {"title": "Edit Distance", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "edit-distance", "reason": "Classic 2D DP problem."},
+                {"title": "Merge K Sorted Lists", "difficulty": "Hard", "topic": "Heaps", "slug": "merge-k-sorted-lists", "reason": "Great priority queue problem."},
+                {"title": "Word Search II", "difficulty": "Hard", "topic": "Trie", "slug": "word-search-ii", "reason": "Combines backtracking with tries."},
+                {"title": "Trapping Rain Water", "difficulty": "Hard", "topic": "Arrays", "slug": "trapping-rain-water", "reason": "Two pointers on arrays."},
+                {"title": "Serialize and Deserialize Binary Tree", "difficulty": "Hard", "topic": "Trees", "slug": "serialize-and-deserialize-binary-tree", "reason": "Tree traversal and string parsing."},
+                {"title": "Longest Increasing Path in a Matrix", "difficulty": "Hard", "topic": "Graphs", "slug": "longest-increasing-path-in-a-matrix", "reason": "DFS with memoization."},
+                {"title": "Burst Balloons", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "burst-balloons", "reason": "Complex divide and conquer DP."},
+                {"title": "Find Median from Data Stream", "difficulty": "Hard", "topic": "Heaps", "slug": "find-median-from-data-stream", "reason": "Two heaps pattern."},
+                {"title": "Regular Expression Matching", "difficulty": "Hard", "topic": "Dynamic Programming", "slug": "regular-expression-matching", "reason": "Advanced 2D DP problem."}
+            ]
+
+    # Ensure Leetcode URLs
+    for r in recs:
+        if "slug" in r and "leetcode_url" not in r:
+            r["leetcode_url"] = f"https://leetcode.com/problems/{r['slug']}/"
+        r["solved"] = r.get("slug") in solved_slugs
+
+    await db.problem_recommendations.delete_many({"user_id": user["user_id"]})
+    await db.problem_recommendations.insert_one({
+        "user_id": user["user_id"],
+        "recommendations": recs,
+        "level": level,
+        "generated_at": datetime.now(timezone.utc).isoformat()
+    })
+
+    return {"recommendations": recs, "level": level}
+
+@api_router.post("/problems/{slug}/solved")
+async def mark_problem_solved(slug: str, request: Request):
+    user = await get_current_user(request)
+    
+    # Add to solved_problems
+    await db.solved_problems.update_one(
+        {"user_id": user["user_id"], "slug": slug},
+        {"$set": {"solved_at": datetime.now(timezone.utc).isoformat()}},
+        upsert=True
+    )
+    
+    # Delete recommendations cache to force refresh with new problem
+    await db.problem_recommendations.delete_many({"user_id": user["user_id"]})
+    
+    # We could theoretically generate 1 new problem with Ollama here, but 
+    # to be simple and robust we just delete the cache so the next GET refreshes it.
+    return {"message": "Problem marked as solved", "slug": slug}
+
+@api_router.get("/problems/solved")
+async def get_solved_problems(request: Request):
+    user = await get_current_user(request)
+    solved = await db.solved_problems.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    return {"solved_problems": solved}
+
 # ======================== STARTUP ========================
 
 @app.on_event("startup")
@@ -1259,7 +1976,9 @@ async def startup():
     await db.login_attempts.create_index("identifier")
     await db.goals.create_index("user_id")
     await db.goals.create_index("goal_id")
+    await db.goals.create_index([("user_id", 1), ("title", 1)], unique=True)
     await db.insights.create_index("user_id")
+    await db.problem_recommendations.create_index("user_id")
     await db.password_reset_tokens.create_index("token")
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
 

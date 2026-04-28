@@ -3,6 +3,7 @@ import api from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from "recharts";
 import { Gauge, TrendingUp, Code2, GitBranch, Calendar } from "lucide-react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 
 const COLORS = {
   dsa: "#8B5CF6",
@@ -119,91 +120,120 @@ export default function ReadinessPage() {
           </CardContent>
         </Card>
 
+
         {/* Score Breakdown */}
         <div className="lg:col-span-2 space-y-4">
-          {/* DSA */}
-          <Card className="border rounded-lg animate-fade-in stagger-2" data-testid="dsa-score-card">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-brand-dsa/10 flex items-center justify-center">
-                    <Code2 size={20} className="text-brand-dsa" />
+          <Accordion type="multiple" defaultValue={[]} className="w-full space-y-4">
+            
+            {/* DSA */}
+            <AccordionItem value="dsa" className="border rounded-lg bg-card text-card-foreground shadow-sm px-1 animate-fade-in stagger-2" data-testid="dsa-score-accordion">
+              <AccordionTrigger className="hover:no-underline px-4 py-4">
+                <div className="flex flex-1 items-center justify-between mr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-brand-dsa/10 flex items-center justify-center shrink-0">
+                      <Code2 size={20} className="text-brand-dsa" />
+                    </div>
+                    <div className="text-left">
+                      <h3 className="font-heading font-semibold text-sm sm:text-base">DSA & Problem Solving</h3>
+                      <p className="text-xs text-muted-foreground font-normal">Weight: 45%</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-heading font-semibold">DSA & Problem Solving</h3>
-                    <p className="text-xs text-muted-foreground">Weight: 45%</p>
+                  <div className="text-right shrink-0">
+                    <p className="text-xl sm:text-2xl font-mono font-bold text-foreground" data-testid="dsa-score-value">{readiness?.dsa?.score?.toFixed(1) || 0}%</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-2xl font-mono font-bold" data-testid="dsa-score-value">{readiness?.dsa?.score?.toFixed(1) || 0}%</p>
+              </AccordionTrigger>
+              <AccordionContent className="px-4 pb-5 pt-0">
+                <div className="w-full bg-muted rounded-full h-3 mb-2">
+                  <div
+                    className="h-3 rounded-full transition-all duration-700"
+                    style={{ width: `${readiness?.dsa?.score || 0}%`, backgroundColor: COLORS.dsa }}
+                  />
                 </div>
-              </div>
-              <div className="w-full bg-muted rounded-full h-3">
-                <div
-                  className="h-3 rounded-full transition-all duration-700"
-                  style={{ width: `${readiness?.dsa?.score || 0}%`, backgroundColor: COLORS.dsa }}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                {readiness?.dsa?.problems_solved || 0} problems solved across platforms
-              </p>
-            </CardContent>
-          </Card>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {readiness?.dsa?.problems_solved || 0} problems solved across platforms
+                </p>
+                {readiness?.dsa?.ai_recommendation && (
+                  <div className="mt-3 p-3 bg-brand-dsa/5 border border-brand-dsa/10 rounded-md">
+                    <p className="text-xs font-medium text-brand-dsa mb-1">💡 AI Recommendation</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{readiness.dsa.ai_recommendation}</p>
+                  </div>
+                )}
+              </AccordionContent>
+            </AccordionItem>
 
-          {/* Projects */}
-          <Card className="border rounded-lg animate-fade-in stagger-3" data-testid="projects-score-card">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-brand-projects/10 flex items-center justify-center">
-                    <GitBranch size={20} className="text-brand-projects" />
+            {/* Projects */}
+            <AccordionItem value="projects" className="border rounded-lg bg-card text-card-foreground shadow-sm px-1 animate-fade-in stagger-3" data-testid="projects-score-accordion">
+              <AccordionTrigger className="hover:no-underline px-4 py-4">
+                <div className="flex flex-1 items-center justify-between mr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-brand-projects/10 flex items-center justify-center shrink-0">
+                      <GitBranch size={20} className="text-brand-projects" />
+                    </div>
+                    <div className="text-left">
+                      <h3 className="font-heading font-semibold text-sm sm:text-base">Projects & GitHub</h3>
+                      <p className="text-xs text-muted-foreground font-normal">Weight: 30%</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-heading font-semibold">Projects & GitHub</h3>
-                    <p className="text-xs text-muted-foreground">Weight: 30%</p>
+                  <div className="text-right shrink-0">
+                    <p className="text-xl sm:text-2xl font-mono font-bold text-foreground" data-testid="projects-score-value">{readiness?.projects?.score?.toFixed(1) || 0}%</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-2xl font-mono font-bold" data-testid="projects-score-value">{readiness?.projects?.score?.toFixed(1) || 0}%</p>
+              </AccordionTrigger>
+              <AccordionContent className="px-4 pb-5 pt-0">
+                <div className="w-full bg-muted rounded-full h-3 mb-2">
+                  <div
+                    className="h-3 rounded-full transition-all duration-700"
+                    style={{ width: `${readiness?.projects?.score || 0}%`, backgroundColor: COLORS.projects }}
+                  />
                 </div>
-              </div>
-              <div className="w-full bg-muted rounded-full h-3">
-                <div
-                  className="h-3 rounded-full transition-all duration-700"
-                  style={{ width: `${readiness?.projects?.score || 0}%`, backgroundColor: COLORS.projects }}
-                />
-              </div>
-            </CardContent>
-          </Card>
+                {readiness?.projects?.ai_recommendation && (
+                  <div className="mt-3 p-3 bg-brand-projects/5 border border-brand-projects/10 rounded-md">
+                    <p className="text-xs font-medium text-brand-projects mb-1">💡 AI Recommendation</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{readiness.projects.ai_recommendation}</p>
+                  </div>
+                )}
+              </AccordionContent>
+            </AccordionItem>
 
-          {/* Consistency */}
-          <Card className="border rounded-lg animate-fade-in stagger-4" data-testid="consistency-score-card">
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-brand-warning/10 flex items-center justify-center">
-                    <Calendar size={20} className="text-brand-warning" />
+            {/* Consistency */}
+            <AccordionItem value="consistency" className="border rounded-lg bg-card text-card-foreground shadow-sm px-1 animate-fade-in stagger-4" data-testid="consistency-score-accordion">
+              <AccordionTrigger className="hover:no-underline px-4 py-4">
+                <div className="flex flex-1 items-center justify-between mr-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-brand-warning/10 flex items-center justify-center shrink-0">
+                      <Calendar size={20} className="text-brand-warning" />
+                    </div>
+                    <div className="text-left">
+                      <h3 className="font-heading font-semibold text-sm sm:text-base">Consistency</h3>
+                      <p className="text-xs text-muted-foreground font-normal">Weight: 25%</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-heading font-semibold">Consistency</h3>
-                    <p className="text-xs text-muted-foreground">Weight: 25%</p>
+                  <div className="text-right shrink-0">
+                    <p className="text-xl sm:text-2xl font-mono font-bold text-foreground" data-testid="consistency-score-value">{readiness?.consistency?.score?.toFixed(1) || 0}%</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-2xl font-mono font-bold" data-testid="consistency-score-value">{readiness?.consistency?.score?.toFixed(1) || 0}%</p>
+              </AccordionTrigger>
+              <AccordionContent className="px-4 pb-5 pt-0">
+                <div className="w-full bg-muted rounded-full h-3 mb-2">
+                  <div
+                    className="h-3 rounded-full transition-all duration-700"
+                    style={{ width: `${readiness?.consistency?.score || 0}%`, backgroundColor: COLORS.consistency }}
+                  />
                 </div>
-              </div>
-              <div className="w-full bg-muted rounded-full h-3">
-                <div
-                  className="h-3 rounded-full transition-all duration-700"
-                  style={{ width: `${readiness?.consistency?.score || 0}%`, backgroundColor: COLORS.consistency }}
-                />
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                {readiness?.consistency?.streak || 0} day streak
-              </p>
-            </CardContent>
-          </Card>
+                <p className="text-xs text-muted-foreground mt-2">
+                  {readiness?.consistency?.streak || 0} day streak
+                </p>
+                {readiness?.consistency?.ai_recommendation && (
+                  <div className="mt-3 p-3 bg-brand-warning/5 border border-brand-warning/10 rounded-md">
+                    <p className="text-xs font-medium text-brand-warning mb-1">💡 AI Recommendation</p>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{readiness.consistency.ai_recommendation}</p>
+                  </div>
+                )}
+              </AccordionContent>
+            </AccordionItem>
+
+          </Accordion>
         </div>
       </div>
     </div>
