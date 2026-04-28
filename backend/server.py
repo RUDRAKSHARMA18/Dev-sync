@@ -1444,6 +1444,10 @@ async def regenerate_insights(request: Request):
 async def get_goals(request: Request):
     try:
         user = await get_current_user(request)
+        
+        # Auto-update progress based on latest platform data before fetching
+        await auto_update_goals_progress(user["user_id"])
+        
         goals = await db.goals.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(100)
         return {"goals": goals}
     except Exception as e:
